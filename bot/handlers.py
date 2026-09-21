@@ -738,7 +738,11 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
                 await message.reply_document(
                     document=f,
                     filename=f"ansogning_{safe_name}.pdf",
-                    caption="Ansøgning у PDF — можна зберегти і роздрукувати.",
+                    caption=(
+                        "Ansøgning у PDF — можна зберегти і роздрукувати.\n"
+                        "Якщо файл просто відкривається для перегляду: клікніть правою "
+                        "кнопкою миші на файл → «Зберегти як...» / «Save link as...»."
+                    ),
                 )
 
             vacancy_pdf_path = Path(tmp_dir) / "vacancy.pdf"
