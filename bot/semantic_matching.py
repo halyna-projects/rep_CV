@@ -24,36 +24,38 @@ class SemanticMatch:
         self.reasoning = reasoning
 
 
-PROMPT_TEMPLATE = """Ты помогаешь соискателю в Дании оценить, насколько вакансии подходят под его резюме — не по формальному совпадению слов, а по сути: реальные задачи, уровень позиции, требуемый опыт, язык объявления против уровня языка соискателя.
+PROMPT_TEMPLATE = """You help a job seeker in Denmark evaluate how well vacancies actually match their CV — not by superficial word overlap, but by substance: the real day-to-day tasks, seniority level, required experience, and the vacancy's language level against the candidate's stated language level.
 
-РЕЗЮМЕ СОИСКАТЕЛЯ:
+CANDIDATE'S CV:
 ---
 {cv_text}
 ---
 
-ВАКАНСИИ (оцени каждую независимо):
+VACANCIES (score each independently):
 {vacancies_block}
 
-Для каждой вакансии дай:
-- percent: целое число 0-100, насколько реально этот человек подходит на эту позицию с этим CV (учитывай суть работы, а не только ключевые слова; если позиция требует другой специализации несмотря на схожие слова — ставь низкий процент)
-- reasoning: одно короткое предложение НА УКРАИНСКОМ ЯЗЫКЕ (мова — українська), объясняющее оценку (что совпадает или чего не хватает). Называй человека нейтрально словом "кандидат" (никогда не "кандидатка" и не угадывай/упоминай пол по имени или другим признакам в резюме) — пол соискателя не имеет отношения к оценке вакансии.
+For each vacancy, give:
+- percent: an integer 0-100, how realistically this person fits this specific position given this CV (judge by the substance of the work, not just keyword overlap; if the role requires a different specialization despite similar-sounding words, give a low percent)
+- reasoning: one short sentence IN UKRAINIAN (мова — українська) explaining the score (what matches or what is missing). Refer to the person neutrally as "кандидат" (never "кандидатка", and never guess or mention gender based on the name or other CV clues) — the applicant's gender has no bearing on the vacancy match.
 
-ВАЖНО: не приписывай кандидату навыки или опыт, которых нет в резюме буквально. Общий опыт с технологией/инструментом ≠ опыт в конкретной специализации/роли/отрасли.
+IMPORTANT: never credit the candidate with skills or experience that are not literally present in the CV. General exposure to a technology/tool ≠ experience in a specific specialization/role/industry.
 
-ОБЩИЙ ПРИНЦИП, который чаще всего приводит к завышенным оценкам: модель видит поверхностную техническую связь ("оба работают с данными", "оба используют компьютер", "оба про SQL/базы") и засчитывает её как настоящее частичное совпадение, хотя РЕАЛЬНЫЕ задачи вакансии требуют совсем другого набора знаний, которого в резюме нет. Поверхностная техническая связь — это НЕ то же самое, что релевантный опыт.
+GENERAL PRINCIPLE that most often causes inflated scores: the model spots a surface-level technical connection ("both work with data", "both use a computer", "both involve SQL/databases") and counts it as genuine partial overlap, even though the vacancy's REAL tasks require a completely different skill set that is absent from the CV. A surface-level technical connection is NOT the same as relevant experience.
 
-Пример 1 (администрирование БД): в резюме — "работал с SQL-базами данных, датаобработкой и отчётностью", БЕЗ слова "администратор" и без задач вроде backup/recovery, patching, RMAN, Data Guard, RAC. Вакансия "Oracle Database Administrator" требует именно этих задач. 80-85% с reasoning "сильный опыт с администрированием" — ОШИБКА. Правильно: 30-45%, и в reasoning прямо написать, что это разные роли, даже если оба "работают с Oracle/SQL".
+Example 1 (database administration): the CV says "worked with SQL databases, data processing and reporting", WITHOUT the word "administrator" and without tasks like backup/recovery, patching, RMAN, Data Guard, RAC. The vacancy "Oracle Database Administrator" requires exactly these tasks. 80-85% with reasoning "strong experience in administration" — WRONG. Correct: 30-45%, and the reasoning must say plainly these are different roles, even though both "work with Oracle/SQL".
 
-Пример 2 (бухгалтерия): в резюме — общий опыт работы с реляционными базами данных / SQL, БЕЗ упоминания бухучёта, проводок, НДС, годовой отчётности. Вакансия "Bogholder" (бухгалтер) требует именно бухгалтерских знаний (проводки, налоги, отчётность) — умение писать SQL-запросы к этим знаниям никак не относится. Ставить здесь даже 5-15% с reasoning вида "опыт с базами данных даёт понимание структур данных" — ОШИБКА того же типа, что и в примере 1: работа с данными в базе ≠ знание бухгалтерского учёта. Правильно: ровно 0%.
+Example 2 (bookkeeping): the CV shows general experience with relational databases/SQL, WITHOUT any mention of bookkeeping, journal entries, VAT, annual reporting. The vacancy "Bogholder" (bookkeeper) requires exactly bookkeeping knowledge (entries, tax, reporting) — the ability to write SQL queries has nothing to do with that knowledge. Giving even 5-15% here with reasoning like "database experience gives an understanding of data structures" is the SAME KIND OF ERROR as example 1: working with data in a database ≠ knowing accounting. Correct: exactly 0%.
 
-НОЛЬ, А НЕ МАЛЕНЬКОЕ ЧИСЛО: если в резюме нет НИ ОДНОГО реально релевантного навыка/знания для ОСНОВНЫХ задач вакансии (только общая техническая грамотность, не относящаяся к сути роли, или вообще ничего общего) — ставь ровно 0%, а не символические 5-10%. Небольшой ненулевой процент "на всякий случай, вдруг получится" — вводит человека в заблуждение не меньше, чем завышенный. Вакансия всё равно останется в списке результатов (это же результат поиска по ключевому слову) — человек сам решит, подаваться ли, несмотря на другой профиль; твоя задача — дать честную цифру, а не решать за него, оставляя "утешительный" процент.
+Example 3 (job function mismatch — management vs execution): the CV shows a purely technical/execution background (developer, database engineer, QA) with NO product-management, stakeholder-management, or roadmap-ownership experience. The vacancy is a "Product Manager" or similar strategy/ownership role that explicitly requires experience "building or managing" a product, prioritizing a roadmap, and owning business trade-offs — even if the vacancy also uses AI/tech vocabulary the CV shares (AI agents, chatbots, data). Shared subject-matter vocabulary between a management role and an execution role is NOT the same as being qualified for the management role. Do not give 60-80% just because the topic (AI) overlaps; the JOB FUNCTION itself (own the product vs. build the product) is a separate axis from the topic, and a mismatch there caps the score sharply. Correct: 15-35%, with the reasoning naming the function mismatch explicitly (e.g., "кандидат має технічний досвід, але бракує досвіду продуктового менеджменту").
 
-Перед тем как поставить процент выше 20% из-за "смежного" технического навыка — спроси себя: этот навык из резюме реально нужен для выполнения ОСНОВНЫХ задач вакансии (не побочных, а именно тех, ради которых эта позиция существует), или это просто общая компьютерная/техническая грамотность, которая есть у многих независимо от специализации? Если второе — ставь 0%, а не низкий, но ненулевой процент.
+ZERO, NOT A SMALL NUMBER: if the CV contains NOT A SINGLE genuinely relevant skill/knowledge for the vacancy's CORE tasks (only general technical literacy unrelated to the role's substance, or nothing in common at all) — give exactly 0%, not a symbolic 5-10%. A small non-zero percent "just in case, maybe it'll work out" misleads the person just as much as an inflated one. The vacancy stays in the results list regardless (it's a keyword search result); the person decides for themselves whether to apply despite a different profile — your job is to give an honest number, not to decide for them by leaving a "consolation" percent.
 
-СОГЛАСОВАННОСТЬ percent И reasoning — ОБЯЗАТЕЛЬНО: если в reasoning ты пишешь, что ключевого профильного опыта/знания НЕТ в резюме (например: "не хватает бухгалтерского опыта", "нет опыта администрирования", "требует другой специализации") — percent должен быть 0, даже если ты же упомянул какую-то смежную техническую деталь как "плюс". Средний процент (30-50%) допустим только когда есть настоящее пересечение в ОСНОВНЫХ задачах роли, а низкий ненулевой процент (1-20%) — только когда есть хоть небольшой, но буквально присутствующий в резюме релевантный элемент (не общая техническая грамотность).
+Before giving a percent above 20% because of an "adjacent" technical skill — ask yourself: is this skill from the CV actually needed for the vacancy's CORE tasks (not incidental ones, but the ones this position exists for), or is it just general computer/technical literacy that many people have regardless of specialization? If the latter — give 0%, not a low-but-nonzero percent.
 
-Ответь СТРОГО в виде JSON-массива объектов, по одному на каждую вакансию, в том же порядке:
-[{{"percent": <int>, "reasoning": "<строка>"}}, ...]
+CONSISTENCY BETWEEN percent AND reasoning — MANDATORY: if the reasoning says key domain experience/knowledge is MISSING from the CV (e.g., "не вистачає бухгалтерського досвіду", "немає досвіду адміністрування", "потребує іншої спеціалізації") — percent must be 0, even if you also mentioned some adjacent technical detail as a "plus". A medium percent (30-50%) is only acceptable when there is genuine overlap in the role's CORE tasks, and a low non-zero percent (1-20%) only when there is at least a small but literally-present relevant element in the CV (not general technical literacy).
+
+Respond STRICTLY as a JSON array of objects, one per vacancy, in the same order:
+[{{"percent": <int>, "reasoning": "<string>"}}, ...]
 """
 
 
@@ -64,8 +66,8 @@ def semantic_match_batch(
         return []
 
     vacancies_block = "\n\n".join(
-        f"[{i}] {v.title}\nКомпания: {v.company}\nМесто: {v.location}\n"
-        f"Описание: {truncate(v.description, MAX_DESCRIPTION_CHARS)}"
+        f"[{i}] {v.title}\nCompany: {v.company}\nLocation: {v.location}\n"
+        f"Description: {truncate(v.description, MAX_DESCRIPTION_CHARS)}"
         for i, v in enumerate(vacancies)
     )
 
