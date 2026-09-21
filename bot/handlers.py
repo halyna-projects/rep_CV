@@ -740,8 +740,7 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
                     filename=f"ansogning_{safe_name}.pdf",
                     caption=(
                         "Ansøgning у PDF — можна зберегти і роздрукувати.\n"
-                        "Якщо файл просто відкривається для перегляду: клікніть правою "
-                        "кнопкою миші на файл → «Зберегти як...» / «Save link as...»."
+                        "Для збереження файлу — клікніть правою кнопкою миші."
                     ),
                 )
 
