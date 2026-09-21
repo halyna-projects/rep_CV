@@ -770,6 +770,14 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
 
             vacancy_text = f"{vacancy.title}\n\n{_strip_html(vacancy.description)}"
             vacancy_ua = await asyncio.to_thread(translate_to_ukrainian, vacancy_text)
+            # Appended after translation, not before -- a link run through
+            # the translation model risks coming back mangled. This was
+            # missing entirely before: the UA file had no link at all, so
+            # returning to a saved vacancy later meant digging through the
+            # Danish PDF instead, where the link isn't even a real
+            # clickable/copyable hyperlink, just plain text.
+            if vacancy.url:
+                vacancy_ua += f"\n\nПосилання: {vacancy.url}"
             vacancy_ua_path = Path(tmp_dir) / "vacancy_ua.txt"
             vacancy_ua_path.write_text(vacancy_ua, encoding="utf-8")
             with open(vacancy_ua_path, "rb") as f:
