@@ -18,9 +18,9 @@ def extract_text(file_path: str) -> str:
         # Legacy binary Word format has no good pure-Python reader; ask
         # the person to re-save as .docx or .pdf instead of guessing.
         raise ValueError(
-            "Старый формат .doc не поддерживается, пересохраните CV как .docx или .pdf"
+            "Старий формат .doc не підтримується, перезбережіть CV як .docx або .pdf"
         )
-    raise ValueError(f"Неизвестный формат файла: {suffix}")
+    raise ValueError(f"Невідомий формат файлу: {suffix}")
 
 
 def _extract_pdf(path: Path) -> str:

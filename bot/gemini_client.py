@@ -26,7 +26,14 @@ def is_configured() -> bool:
 def get_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=GEMINI_API_KEY)
+        # Without an explicit timeout, a stuck Gemini call hangs forever --
+        # no exception, nothing in the logs, the bot just never replies.
+        # Every other network call in this bot (job sources, Telegram
+        # itself) already has one; this was the one gap.
+        _client = genai.Client(
+            api_key=GEMINI_API_KEY,
+            http_options=types.HttpOptions(timeout=45_000),
+        )
     return _client
 
 

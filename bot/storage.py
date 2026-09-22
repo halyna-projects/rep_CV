@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     cv_text TEXT DEFAULT NULL,
     location TEXT DEFAULT '',
     last_results TEXT DEFAULT NULL,
+    last_search_keywords TEXT DEFAULT NULL,
     letters_explained_count INTEGER DEFAULT 0
 );
 
@@ -50,6 +51,10 @@ def init_db():
         if "letters_explained_count" not in columns:
             conn.execute(
                 "ALTER TABLE users ADD COLUMN letters_explained_count INTEGER DEFAULT 0"
+            )
+        if "last_search_keywords" not in columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN last_search_keywords TEXT DEFAULT NULL"
             )
 
 
@@ -149,6 +154,29 @@ def set_last_results(telegram_id: int, scored: list[tuple[Vacancy, int, str]]):
             "UPDATE users SET last_results = ? WHERE telegram_id = ?",
             (payload, telegram_id),
         )
+
+
+def set_last_search_keywords(telegram_id: int, keywords: list[str]):
+    """The terms actually used to find the last result list -- the
+    person's own typed keywords plus any term the agentic typo/synonym
+    search substituted in. Shown as the "Ключові слова:" line on each
+    vacancy (see format_vacancy), including on "Показати список знову",
+    so that line doesn't silently disappear just because the original
+    keyword had a typo that got corrected."""
+    ensure_user(telegram_id)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET last_search_keywords = ? WHERE telegram_id = ?",
+            (",".join(keywords), telegram_id),
+        )
+
+
+def get_last_search_keywords(telegram_id: int) -> list[str]:
+    user = get_user(telegram_id)
+    raw = (user or {}).get("last_search_keywords")
+    if not raw:
+        return get_keywords(telegram_id)
+    return [k.strip() for k in raw.split(",") if k.strip()]
 
 
 def get_last_results(telegram_id: int) -> list[tuple[Vacancy, int, str]]:

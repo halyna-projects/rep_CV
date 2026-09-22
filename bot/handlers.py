@@ -16,16 +16,23 @@ from telegram.error import NetworkError, TimedOut
 from telegram.ext import ContextTypes
 
 from bot import cv_parser, storage
+from bot.agentic_search import agentic_keyword_search
 from bot.danish_cities import resolve_city
 from bot.config import ADMIN_TELEGRAM_ID, UPLOADS_DIR
 from bot.contact_extraction import extract_contact_info
 from bot.letter_explainer import explain_letter_image, explain_letter_text
 from bot.letter_generation import generate_cover_letter
+from bot.manual_vacancy import (
+    extract_vacancy_from_image,
+    extract_vacancy_from_text,
+    fetch_url_text,
+)
 from bot.matching import compute_match
 from bot.pdf_export import _strip_html, letter_to_pdf, vacancy_to_pdf
-from bot.search import search_all
+from bot.search import search_keyword
 from bot.semantic_matching import is_configured as semantic_matching_configured
 from bot.semantic_matching import semantic_match_batch
+from bot.sources import dedupe
 from bot.translation import translate_to_ukrainian
 
 logger = logging.getLogger(__name__)
@@ -57,7 +64,8 @@ BTN_LOCATION = "📍 Місто"
 BTN_CV = "📄 Моє CV"
 BTN_CANCEL = "❌ Скасувати"
 BTN_ALL_DENMARK = "🌍 Уся Данія"
-BTN_RESET_SEEN = "🔄 Показати вакансії знову"
+BTN_RESET_SEEN = "🔄 Шукати вакансії знову"
+BTN_ADD_VACANCY = "➕ Додати вакансію вручну"
 BTN_EXPLAIN_LETTER = "📨 Пояснити лист/документ\n(будь-яка мова)"
 
 # Required before the Search button appears at all.
@@ -72,9 +80,25 @@ def _is_ready_for_search(telegram_id: int) -> bool:
 
 
 def build_keyboard(telegram_id: int) -> ReplyKeyboardMarkup:
-    rows = [[BTN_KEYWORDS, BTN_LOCATION], [BTN_CV], [BTN_RESET_SEEN], [BTN_EXPLAIN_LETTER]]
+    # "Шукати вакансії знову" (re-search, forgetting what's already been
+    # shown) only makes sense once there's actually something to search
+    # with -- showing it before that point (alongside a "ШУКАТИ ВАКАНСІЇ"
+    # that isn't even there yet) just confused people into wondering what
+    # the difference was.
     if _is_ready_for_search(telegram_id):
-        rows.insert(0, [BTN_SEARCH])
+        # Both "search" actions together, primary one first -- having the
+        # re-search button appear above the main search button read as if
+        # the secondary action came before the main one.
+        rows = [
+            [BTN_KEYWORDS, BTN_LOCATION, BTN_CV],
+            [BTN_SEARCH, BTN_RESET_SEEN],
+            [BTN_ADD_VACANCY, BTN_EXPLAIN_LETTER],
+        ]
+    else:
+        rows = [
+            [BTN_KEYWORDS, BTN_LOCATION, BTN_CV],
+            [BTN_ADD_VACANCY, BTN_EXPLAIN_LETTER],
+        ]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -125,7 +149,9 @@ WELCOME = (
     "Користуйтеся кнопками внизу екрана:\n"
     f"{BTN_KEYWORDS} — задати свої ключові слова через кому\n"
     f"{BTN_LOCATION} — необов'язково, відфільтрувати за містом\n"
-    f"{BTN_CV} — завантажити/перевірити своє CV (PDF або Word — просто надішліть файл)\n\n"
+    f"{BTN_CV} — завантажити/перевірити своє CV (PDF або Word — просто надішліть файл)\n"
+    f"{BTN_ADD_VACANCY} — знайшли вакансію самі десь в іншому місці? Надішліть "
+    "посилання, PDF або фото оголошення, і бот оцінить її так само.\n\n"
     f"Кнопка {BTN_SEARCH} з'явиться, коли заповните ключові слова та CV."
 )
 
@@ -339,6 +365,13 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == BTN_EXPLAIN_LETTER:
         await _prompt_explain_letter(update, context)
         return
+    if text == BTN_ADD_VACANCY:
+        context.user_data["awaiting"] = "manual_vacancy"
+        await update.message.reply_text(
+            "Надішліть посилання на вакансію, PDF-файл, або фото/скріншот оголошення.",
+            reply_markup=CANCEL_KEYBOARD,
+        )
+        return
 
     awaiting = context.user_data.pop("awaiting", None)
     if awaiting == "location":
@@ -353,6 +386,17 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=CANCEL_KEYBOARD,
         )
         context.user_data["awaiting"] = "letter"
+        return
+    if awaiting == "manual_vacancy":
+        if text.startswith("http://") or text.startswith("https://"):
+            await _process_manual_vacancy_text(update, telegram_id, text)
+        else:
+            context.user_data["awaiting"] = "manual_vacancy"
+            await update.message.reply_text(
+                "Це не схоже на посилання. Надішліть посилання на вакансію, "
+                "PDF-файл, або фото/скріншот оголошення.",
+                reply_markup=CANCEL_KEYBOARD,
+            )
         return
 
     # A bare number (no /apply, no other pending state) almost always means
@@ -378,8 +422,14 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("awaiting") == "letter":
+    awaiting = context.user_data.get("awaiting")
+    if awaiting == "letter":
         await _handle_letter_document(update, context)
+        return
+    if awaiting == "manual_vacancy":
+        context.user_data.pop("awaiting", None)
+        telegram_id = update.effective_user.id
+        await handle_manual_vacancy_document(update, telegram_id, update.message.document)
         return
     await handle_cv_upload(update, context)
 
@@ -431,12 +481,33 @@ async def _handle_letter_document(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("awaiting") != "letter":
-        # Stray photo outside the letter-explain flow -- CVs are never
-        # uploaded as photos in this bot, so there's nothing useful to do.
+    telegram_id = update.effective_user.id
+    awaiting = context.user_data.get("awaiting")
+
+    if awaiting == "manual_vacancy":
+        context.user_data.pop("awaiting", None)
+        message = update.effective_message
+        photo = update.message.photo[-1]  # largest resolution
+        tg_file = await photo.get_file()
+        photo_bytes = bytes(await tg_file.download_as_bytearray())
+
+        vacancy = await asyncio.to_thread(extract_vacancy_from_image, photo_bytes, "image/jpeg")
+        if vacancy is None:
+            await message.reply_text(
+                "Не вдалося розпізнати вакансію на фото. Спробуйте чіткіше "
+                "фото, посилання, або PDF.",
+                reply_markup=build_keyboard(telegram_id),
+            )
+            return
+        await _process_manual_vacancy(update, telegram_id, vacancy)
+        return
+
+    if awaiting != "letter":
+        # Stray photo outside the letter-explain/manual-vacancy flows --
+        # CVs are never uploaded as photos in this bot, so there's nothing
+        # useful to do.
         return
     context.user_data.pop("awaiting", None)
-    telegram_id = update.effective_user.id
 
     await send_with_retry(update, "Читаю лист...")
 
@@ -517,6 +588,119 @@ async def reset_seen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # rather than just clearing a flag and leaving the person to guess
     # that they now need to separately press Search.
     await run_search(update, context)
+
+
+async def _process_manual_vacancy(update: Update, telegram_id: int, vacancy) -> None:
+    """Shared tail end for a manually-added vacancy (from a link, PDF, or
+    photo) -- once we have a Vacancy object, treat it exactly like one more
+    search result: score it, append it to the running list, and let the
+    normal "send its number" flow take it from there."""
+    message = update.effective_message
+
+    cv_text = storage.get_cv_text(telegram_id)
+    if not cv_text:
+        await message.reply_text(
+            f"Не знайшов текст вашого CV — надішліть файл ще раз через {BTN_CV}.",
+            reply_markup=build_keyboard(telegram_id),
+        )
+        return
+
+    scored = await asyncio.to_thread(_score_vacancies, telegram_id, [vacancy], [])
+    v, percent, detail = scored[0]
+
+    existing = storage.get_last_results(telegram_id)
+    combined = existing + [(v, percent, detail)]
+    storage.set_last_results(telegram_id, combined)
+
+    text = format_vacancy(len(combined), v, percent, detail, [])
+    await send_with_retry(
+        update,
+        text + "\n\n" + NUMBER_HINT_HTML,
+        disable_web_page_preview=True,
+        parse_mode="HTML",
+        reply_markup=build_keyboard(telegram_id),
+    )
+
+
+async def _process_manual_vacancy_text(update: Update, telegram_id: int, url: str) -> None:
+    message = update.effective_message
+
+    # The same job re-scored from scratch can land on a different %/reasoning
+    # than the first time (a fresh AI call, sometimes a trimmed description)
+    # -- confusing if it's already sitting in the list under another number.
+    # Point back to that instead of creating an inconsistent duplicate.
+    existing = storage.get_last_results(telegram_id)
+    for i, (v, _percent, _detail) in enumerate(existing, start=1):
+        if v.url and v.url == url:
+            await message.reply_text(
+                f"Ця вакансія вже є у вашому списку під номером {i} — подивіться "
+                "оцінку там, замість повторної оцінки.",
+                reply_markup=_apply_keyboard(),
+            )
+            return
+
+    await message.reply_text("Завантажую оголошення про вакансію...")
+    try:
+        page_text = await asyncio.to_thread(fetch_url_text, url)
+    except Exception:
+        logger.exception("Could not fetch manual vacancy URL %r for %s", url, telegram_id)
+        await message.reply_text(
+            "Не вдалося завантажити сторінку (посилання може не працювати, "
+            "або сайт блокує бота). Спробуйте натомість надіслати PDF або "
+            "фото оголошення.",
+            reply_markup=build_keyboard(telegram_id),
+        )
+        return
+
+    vacancy = await asyncio.to_thread(extract_vacancy_from_text, page_text)
+    if vacancy is None:
+        await message.reply_text(
+            "Не вдалося розпізнати вакансію на цій сторінці. Спробуйте "
+            "натомість надіслати PDF або фото оголошення.",
+            reply_markup=build_keyboard(telegram_id),
+        )
+        return
+    vacancy.url = url
+    await _process_manual_vacancy(update, telegram_id, vacancy)
+
+
+async def handle_manual_vacancy_document(update: Update, telegram_id: int, document: Document) -> None:
+    message = update.effective_message
+    filename = (document.file_name or "").lower()
+    if not filename.endswith((".pdf", ".doc", ".docx")):
+        await message.reply_text(
+            "Надішліть вакансію як PDF або Word, або натомість надішліть "
+            "посилання чи фото.",
+            reply_markup=build_keyboard(telegram_id),
+        )
+        return
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        dest_path = Path(tmp_dir) / (document.file_name or "vacancy.pdf")
+        tg_file = await document.get_file()
+        await tg_file.download_to_drive(custom_path=str(dest_path))
+        try:
+            text = cv_parser.extract_text(str(dest_path))
+        except Exception:
+            logger.exception(
+                "Could not extract text from manual vacancy file for %s", telegram_id
+            )
+            await message.reply_text(
+                "Не вдалося прочитати текст з файлу. Спробуйте зберегти його "
+                "як звичайний PDF, або надішліть фото оголошення.",
+                reply_markup=build_keyboard(telegram_id),
+            )
+            return
+
+    vacancy = await asyncio.to_thread(extract_vacancy_from_text, text)
+    if vacancy is None:
+        await message.reply_text(
+            "Не вдалося розпізнати вакансію у цьому файлі. Спробуйте "
+            "натомість посилання або фото.",
+            reply_markup=build_keyboard(telegram_id),
+        )
+        return
+    await _process_manual_vacancy(update, telegram_id, vacancy)
 
 
 def _matched_keywords(v, keywords: list[str]) -> list[str]:
@@ -611,19 +795,64 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         + " ...",
     )
 
-    vacancies = await asyncio.to_thread(search_all, keywords, location)
+    # Check each keyword on its own, not just the combined list -- with
+    # several keywords, one of them returning 0 results used to be masked
+    # by the others finding plenty, so a typo silently vanished from the
+    # search with no correction attempt and no explanation.
+    vacancies: list = []
+    empty_keywords: list[str] = []
+    for kw in keywords:
+        kw_results = await asyncio.to_thread(search_keyword, kw)
+        if kw_results:
+            vacancies.extend(kw_results)
+        else:
+            empty_keywords.append(kw)
+
+    # Pilot: for any keyword that found 0 results on its own, let Gemini
+    # itself decide on a broader/synonym Danish term and try that --
+    # instead of us hard-coding a synonym list. Capped at 2 extra tries
+    # per keyword inside agentic_keyword_search, so this can't loop.
+    display_keywords = list(keywords)
+    if empty_keywords and semantic_matching_configured():
+        agent_notes: list[str] = []
+        extra_vacancies = []
+        for kw in empty_keywords:
+            extra, log, used_term = await asyncio.to_thread(agentic_keyword_search, kw)
+            extra_vacancies.extend(extra)
+            agent_notes.extend(log)
+            if used_term:
+                display_keywords.append(used_term)
+
+        vacancies.extend(extra_vacancies)
+
+        if agent_notes:
+            await send_with_retry(update, "🤖 " + " ".join(agent_notes))
+
+    vacancies = dedupe(vacancies)
+    if location:
+        needle = location.strip().lower()
+        vacancies = [v for v in vacancies if needle in v.location.lower()]
 
     urls = [v.url for v in vacancies if v.url]
     unseen_urls = storage.filter_unseen(telegram_id, urls)
     new_vacancies = [v for v in vacancies if v.url in unseen_urls or not v.url]
 
     if not new_vacancies:
-        await send_with_retry(
-            update,
-            "Нових вакансій не знайшлося (або всі вже надсилав раніше). "
-            f"Якщо хочете побачити їх знову — натисніть «{BTN_RESET_SEEN}».",
-            reply_markup=build_keyboard(telegram_id),
-        )
+        if vacancies:
+            await send_with_retry(
+                update,
+                "Нових вакансій не знайшлося — вони вже були показані раніше. "
+                f"Натисніть «{BTN_RESET_SEEN}», щоб побачити їх знову, або "
+                "напишіть нове ключове слово для нового пошуку.",
+                reply_markup=build_keyboard(telegram_id),
+            )
+        else:
+            await send_with_retry(
+                update,
+                "Вакансій за цим запитом не знайдено. Напишіть нове ключове "
+                "слово для нового пошуку.",
+                reply_markup=build_keyboard(telegram_id),
+            )
         return
 
     scored = await asyncio.to_thread(_score_vacancies, telegram_id, new_vacancies, keywords)
@@ -632,6 +861,7 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     MAX_RESULTS = 20
     to_send = scored[:MAX_RESULTS]
     storage.set_last_results(telegram_id, to_send)
+    storage.set_last_search_keywords(telegram_id, display_keywords)
 
     # Said again at the end of the full list too, but that's easy to miss
     # if the person doesn't scroll past a long list -- show it right above
@@ -642,16 +872,18 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
 
-    sent_urls = await _send_results_chunks(update, to_send, keywords)
+    sent_urls = await _send_results_chunks(update, to_send, display_keywords)
     storage.mark_seen(telegram_id, sent_urls)
 
     footer = (
-        f"...і ще {len(new_vacancies) - MAX_RESULTS}. "
-        f"Уточніть ключові слова або місто, щоб звузити список."
+        f"Показую {MAX_RESULTS} найкращих збігів із {len(new_vacancies)} знайдених. "
+        f"Решта {len(new_vacancies) - MAX_RESULTS} мали нижчий збіг — напишіть "
+        "конкретніші ключові слова для нового результату."
         if len(new_vacancies) > MAX_RESULTS
-        else "Це всі нові вакансії на зараз."
+        else "Це всі нові вакансії наразі."
     )
     footer += "\n\n" + NUMBER_HINT_HTML
+    footer += "\n\nНапишіть нове ключове слово, щоб шукати знову, або скористайтесь меню нижче."
     await send_with_retry(
         update, footer, reply_markup=build_keyboard(telegram_id), parse_mode="HTML"
     )
@@ -675,20 +907,10 @@ async def _send_results_chunks(
     return sent_urls
 
 
-def _apply_keyboard(telegram_id: int, index: int):
-    results = storage.get_last_results(telegram_id)
-    row = []
-    if index < len(results):
-        row.append(
-            InlineKeyboardButton(
-                f"➡️ Наступна (№{index + 1})", callback_data=f"apply:{index + 1}"
-            )
-        )
-    buttons = [row] if row else []
-    buttons.append(
-        [InlineKeyboardButton("📋 Показати список знову", callback_data="relist")]
+def _apply_keyboard():
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📋 Показати список знову", callback_data="relist")]]
     )
-    return InlineKeyboardMarkup(buttons)
 
 
 async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_TYPE, index: int):
@@ -713,7 +935,7 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     vacancy, percent, detail = results[index - 1]
-    await send_with_retry(update, f"Пишу ansøgning для «{vacancy.title}»...")
+    await send_with_retry(update, f"Пишу ansøgning до №{index} «{vacancy.title}»...")
 
     try:
         letter = await asyncio.to_thread(generate_cover_letter, cv_text, vacancy)
@@ -796,8 +1018,8 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
             )
 
     await message.reply_text(
-        "Що далі?",
-        reply_markup=_apply_keyboard(telegram_id, index),
+        "Що далі? Оберіть нижче, або напишіть нове ключове слово для нового пошуку.",
+        reply_markup=_apply_keyboard(),
     )
 
 
@@ -833,8 +1055,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Список з {len(results)}. {NUMBER_HINT_HTML}",
             parse_mode="HTML",
         )
-        await _send_results_chunks(update, results, storage.get_keywords(telegram_id))
+        await _send_results_chunks(update, results, storage.get_last_search_keywords(telegram_id))
         await update.effective_message.reply_text(
-            "Це весь список вище.",
+            f"Це весь список вище. {NUMBER_HINT_HTML}",
+            parse_mode="HTML",
             reply_markup=build_keyboard(telegram_id),
         )
