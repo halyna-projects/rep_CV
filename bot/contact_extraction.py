@@ -5,8 +5,7 @@ This information is almost never in a structured field -- it's buried in
 a sentence like "Har du spørgsmål, kontakt Thorvald Kodal på ... eller
 +45 42 52 79 99" -- so a regex is fragile for the name in particular.
 Gemini extraction is more robust; falls back to "ikke angivet" per field
-when nothing is found (never invents a name/number). Danish, not Russian,
-since this ends up printed in the vacancy PDF alongside Danish labels.
+when nothing is found (never invents a name/number).
 """
 
 import json
@@ -17,25 +16,26 @@ from bot.sources import Vacancy
 
 logger = logging.getLogger(__name__)
 
-MAX_DESCRIPTION_CHARS = 4000
+MAX_DESCRIPTION_CHARS = 6000
 
 NOT_FOUND = "ikke angivet"
 
-PROMPT_TEMPLATE = """Найди в тексте вакансии контактное лицо для вопросов по этой позиции: имя, телефон, email.
+PROMPT_TEMPLATE = """Find the contact person for questions about this vacancy in the text below: name, phone, email.
 
-ТЕКСТ ВАКАНСИИ:
+VACANCY TEXT:
 ---
 {description}
 ---
 
-Правила:
-- Если что-то не упомянуто в тексте — верни для этого поля ровно строку "{not_found}", не придумывай
-- Телефон и email копируй буквально как в тексте, ничего не меняя
-- Если указано несколько контактов, выбери первого/основного
-- Само имя/телефон/email копируй как есть (обычно они и так на датском/латинице), но не переводи их
+Rules:
+- Contact info in Danish job postings is very often placed in a closing section near the END of the text, under a heading like "Rekrutteringsprocessen", "Hør mere om jobbet", "Kontakt", or similar -- read the ENTIRE text carefully, including the end, before concluding that something was not found.
+- If something is genuinely not mentioned in the text -- return exactly the string "{not_found}" for that field, never invent it.
+- Copy phone and email literally as they appear in the text, without changing anything.
+- If several contacts are listed, pick the first/primary one.
+- Copy the name/phone/email themselves as-is (they're usually already in Danish/Latin script) -- do not translate them.
 
-Ответь СТРОГО в виде JSON:
-{{"contact_name": "<имя или {not_found}>", "contact_phone": "<телефон или {not_found}>", "contact_email": "<email или {not_found}>"}}
+Respond STRICTLY as JSON:
+{{"contact_name": "<name or {not_found}>", "contact_phone": "<phone or {not_found}>", "contact_email": "<email or {not_found}>"}}
 """
 
 
