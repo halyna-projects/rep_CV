@@ -110,3 +110,30 @@ def letter_to_pdf(letter_text: str, vacancy, output_path: str):
 
     pdf.output(output_path)
     return output_path
+
+
+def cv_to_pdf(cv_text: str, summary: str, output_path: str) -> str:
+    """A ready-to-submit CV PDF: the tailored profile up top, followed by
+    the person's own CV content -- so applying doesn't require anyone to
+    open a PDF, copy the summary out by hand, and re-save it as a CV
+    themselves.
+    """
+    pdf = FPDF()
+    pdf.add_font("DejaVu", "", str(REGULAR_FONT))
+    pdf.add_font("DejaVu", "B", str(BOLD_FONT))
+    pdf.add_page()
+    pdf.set_margins(20, 20, 20)
+
+    pdf.set_font("DejaVu", "B", 13)
+    pdf.multi_cell(0, 7, "Profil")
+    pdf.ln(2)
+
+    pdf.set_font("DejaVu", "", 11)
+    pdf.multi_cell(0, 6, summary.strip())
+    pdf.ln(8)
+
+    pdf.set_font("DejaVu", "", 10.5)
+    pdf.multi_cell(0, 6, cv_text.strip())
+
+    pdf.output(output_path)
+    return output_path

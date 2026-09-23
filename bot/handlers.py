@@ -28,7 +28,7 @@ from bot.manual_vacancy import (
     fetch_url_text,
 )
 from bot.matching import compute_match
-from bot.pdf_export import _strip_html, letter_to_pdf, vacancy_to_pdf
+from bot.pdf_export import _strip_html, cv_to_pdf, letter_to_pdf, vacancy_to_pdf
 from bot.search import search_keyword
 from bot.semantic_matching import is_configured as semantic_matching_configured
 from bot.semantic_matching import semantic_match_batch
@@ -949,17 +949,11 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         f"{vacancy.title} — {vacancy.company}\n{vacancy.url}\n\n{letter}",
     )
 
+    cv_summary = None
+    cv_summary_ua = None
     try:
         cv_summary = await asyncio.to_thread(generate_cv_summary, cv_text, vacancy)
         cv_summary_ua = await asyncio.to_thread(translate_to_ukrainian, cv_summary)
-        await send_with_retry(
-            update,
-            (
-                "Резюме для CV під цю вакансію (тільки для вас — вставте/замініть "
-                "розділ «Profil» на початку вашого CV перед відправкою):\n\n"
-                f"{cv_summary}\n\n---\nПереклад українською (для розуміння):\n{cv_summary_ua}"
-            ),
-        )
     except Exception:
         logger.exception("CV summary generation failed for %s / %s", telegram_id, vacancy.url)
 
@@ -988,6 +982,19 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
                     filename=f"vakansiya_{safe_name}.pdf",
                     caption="Вакансія у PDF — зверху зведення для логу (контакт, телефон, email, посилання).",
                 )
+
+            if cv_summary:
+                cv_pdf_path = Path(tmp_dir) / "cv.pdf"
+                cv_to_pdf(cv_text, cv_summary, str(cv_pdf_path))
+                with open(cv_pdf_path, "rb") as f:
+                    await message.reply_document(
+                        document=f,
+                        filename=f"cv_{safe_name}.pdf",
+                        caption=(
+                            "Готове CV з профілем під цю вакансію — можна подавати "
+                            "як є, нічого не потрібно копіювати вручну."
+                        ),
+                    )
         except Exception:
             logger.exception("PDF export failed for %s / %s", telegram_id, vacancy.url)
             await message.reply_text("Лист готовий, але не вдалося зробити PDF-файли — спробуйте /apply ще раз.")
@@ -998,8 +1005,17 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         # fail the whole /apply when the letter+PDFs already went out.
         try:
             letter_ua = await asyncio.to_thread(translate_to_ukrainian, letter)
+            letter_ua_full = letter_ua
+            if cv_summary_ua:
+                letter_ua_full = (
+                    "До вашого CV додано короткий профіль під цю вакансію "
+                    f"(данською, у файлі cv_{safe_name}.pdf). Переклад профілю:\n\n"
+                    f"{cv_summary_ua}\n\n---\n\n"
+                    "Рекомендаційний лист (переклад):\n\n"
+                    f"{letter_ua}"
+                )
             letter_ua_path = Path(tmp_dir) / "letter_ua.txt"
-            letter_ua_path.write_text(letter_ua, encoding="utf-8")
+            letter_ua_path.write_text(letter_ua_full, encoding="utf-8")
             with open(letter_ua_path, "rb") as f:
                 await message.reply_document(
                     document=f,
