@@ -34,3 +34,9 @@ ADMIN_TELEGRAM_ID = 2104700983
 # Own test accounts excluded from /stats counts (not real users) --
 # includes the admin's own account, so /stats shows only actual testers.
 EXCLUDED_TELEGRAM_IDS = {7644385945, ADMIN_TELEGRAM_ID}
+
+# New users get this many free AI actions (search/manual-add/apply) before
+# being asked to wait for the admin to grant them full access via /grant --
+# keeps an unexpected wave of new people from running up the Gemini bill
+# before the admin has actually agreed to let them use the bot.
+FREE_TRIAL_AI_ACTIONS = 2

@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS users (
     location TEXT DEFAULT '',
     last_results TEXT DEFAULT NULL,
     last_search_keywords TEXT DEFAULT NULL,
-    letters_explained_count INTEGER DEFAULT 0
+    letters_explained_count INTEGER DEFAULT 0,
+    ai_actions_count INTEGER DEFAULT 0,
+    granted INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS seen_vacancies (
@@ -56,6 +58,12 @@ def init_db():
             conn.execute(
                 "ALTER TABLE users ADD COLUMN last_search_keywords TEXT DEFAULT NULL"
             )
+        if "ai_actions_count" not in columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN ai_actions_count INTEGER DEFAULT 0"
+            )
+        if "granted" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN granted INTEGER DEFAULT 0")
 
 
 def get_user(telegram_id: int):
@@ -189,6 +197,42 @@ def get_last_results(telegram_id: int) -> list[tuple[Vacancy, int, str]]:
         return [(Vacancy(**v), percent, detail) for v, percent, detail in data]
     except (json.JSONDecodeError, TypeError, ValueError):
         return []
+
+
+def get_ai_actions_count(telegram_id: int) -> int:
+    user = get_user(telegram_id)
+    return (user or {}).get("ai_actions_count") or 0
+
+
+def increment_ai_actions(telegram_id: int):
+    ensure_user(telegram_id)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET ai_actions_count = ai_actions_count + 1 "
+            "WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+
+
+def is_granted(telegram_id: int) -> bool:
+    user = get_user(telegram_id)
+    return bool((user or {}).get("granted"))
+
+
+def grant_access(telegram_id: int):
+    ensure_user(telegram_id)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET granted = 1 WHERE telegram_id = ?", (telegram_id,)
+        )
+
+
+def revoke_access(telegram_id: int):
+    ensure_user(telegram_id)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET granted = 0 WHERE telegram_id = ?", (telegram_id,)
+        )
 
 
 def increment_letters_explained(telegram_id: int):

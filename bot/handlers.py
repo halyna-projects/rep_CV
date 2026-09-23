@@ -18,7 +18,7 @@ from telegram.ext import ContextTypes
 from bot import cv_parser, storage
 from bot.agentic_search import agentic_keyword_search
 from bot.danish_cities import resolve_city
-from bot.config import ADMIN_TELEGRAM_ID, UPLOADS_DIR
+from bot.config import ADMIN_TELEGRAM_ID, FREE_TRIAL_AI_ACTIONS, UPLOADS_DIR
 from bot.contact_extraction import extract_contact_info
 from bot.letter_explainer import explain_letter_image, explain_letter_text
 from bot.letter_generation import generate_cover_letter, generate_cv_summary
@@ -183,6 +183,47 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Хоч раз запускали пошук: {s['searched']}\n"
         f"Пояснювали лист/документ: {s['used_letter_explain']}"
     )
+
+
+async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        return
+    if not context.args or not context.args[0].lstrip("-").isdigit():
+        await update.message.reply_text("Формат: /grant 123456789 (telegram ID)")
+        return
+    target_id = int(context.args[0])
+    storage.grant_access(target_id)
+    await update.message.reply_text(f"Дав повний доступ користувачу {target_id}.")
+
+
+async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        return
+    if not context.args or not context.args[0].lstrip("-").isdigit():
+        await update.message.reply_text("Формат: /revoke 123456789 (telegram ID)")
+        return
+    target_id = int(context.args[0])
+    storage.revoke_access(target_id)
+    await update.message.reply_text(f"Прибрав повний доступ у користувача {target_id}.")
+
+
+# New users get FREE_TRIAL_AI_ACTIONS free searches/applications before
+# needing the admin to grant them full access via /grant -- the admin
+# (ADMIN_TELEGRAM_ID) and anyone already granted are exempt.
+QUOTA_MESSAGE = (
+    f"Ви використали безкоштовний ліміт ({FREE_TRIAL_AI_ACTIONS} дії). "
+    "Щоб продовжити користуватися ботом, напишіть адміну, щоб отримати повний доступ."
+)
+
+
+async def _check_ai_quota(update: Update, telegram_id: int) -> bool:
+    if telegram_id == ADMIN_TELEGRAM_ID or storage.is_granted(telegram_id):
+        return True
+    if storage.get_ai_actions_count(telegram_id) >= FREE_TRIAL_AI_ACTIONS:
+        await update.effective_message.reply_text(QUOTA_MESSAGE)
+        return False
+    storage.increment_ai_actions(telegram_id)
+    return True
 
 
 async def _reply_with_next_step(update: Update, telegram_id: int, done_message: str):
@@ -597,6 +638,9 @@ async def _process_manual_vacancy(update: Update, telegram_id: int, vacancy) -> 
     normal "send its number" flow take it from there."""
     message = update.effective_message
 
+    if not await _check_ai_quota(update, telegram_id):
+        return
+
     cv_text = storage.get_cv_text(telegram_id)
     if not cv_text:
         await message.reply_text(
@@ -784,6 +828,9 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if not await _check_ai_quota(update, telegram_id):
+        return
+
     keywords = storage.get_keywords(telegram_id)
     user = storage.get_user(telegram_id)
     location = (user or {}).get("location") or None
@@ -932,6 +979,9 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
 
     if not semantic_matching_configured():
         await message.reply_text("Генерація листів зараз недоступна (не налаштовано доступ до моделі).")
+        return
+
+    if not await _check_ai_quota(update, telegram_id):
         return
 
     vacancy, percent, detail = results[index - 1]
