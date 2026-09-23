@@ -112,12 +112,30 @@ def letter_to_pdf(letter_text: str, vacancy, output_path: str):
     return output_path
 
 
+def _strip_existing_profil_section(cv_text: str) -> str:
+    """Remove the CV's own "Profil"/"Profile" heading and paragraph, if
+    present, so the freshly generated tailored one (inserted separately,
+    at the top of the PDF) isn't followed by a second, generic profile
+    section further down -- which is confusing and looks like a mistake."""
+    lines = cv_text.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip().lower() in ("profil", "profile"):
+            j = i + 1
+            while j < len(lines) and lines[j].strip():
+                j += 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            return "\n".join(lines[:i] + lines[j:])
+    return cv_text
+
+
 def cv_to_pdf(cv_text: str, summary: str, output_path: str) -> str:
     """A ready-to-submit CV PDF: the tailored profile up top, followed by
     the person's own CV content -- so applying doesn't require anyone to
     open a PDF, copy the summary out by hand, and re-save it as a CV
     themselves.
     """
+    cv_text = _strip_existing_profil_section(cv_text)
     pdf = FPDF()
     pdf.add_font("DejaVu", "", str(REGULAR_FONT))
     pdf.add_font("DejaVu", "B", str(BOLD_FONT))
