@@ -21,7 +21,7 @@ from bot.danish_cities import resolve_city
 from bot.config import ADMIN_TELEGRAM_ID, UPLOADS_DIR
 from bot.contact_extraction import extract_contact_info
 from bot.letter_explainer import explain_letter_image, explain_letter_text
-from bot.letter_generation import generate_cover_letter
+from bot.letter_generation import generate_cover_letter, generate_cv_summary
 from bot.manual_vacancy import (
     extract_vacancy_from_image,
     extract_vacancy_from_text,
@@ -948,6 +948,20 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         update,
         f"{vacancy.title} — {vacancy.company}\n{vacancy.url}\n\n{letter}",
     )
+
+    try:
+        cv_summary = await asyncio.to_thread(generate_cv_summary, cv_text, vacancy)
+        cv_summary_ua = await asyncio.to_thread(translate_to_ukrainian, cv_summary)
+        await send_with_retry(
+            update,
+            (
+                "Резюме для CV під цю вакансію (тільки для вас — вставте/замініть "
+                "розділ «Profil» на початку вашого CV перед відправкою):\n\n"
+                f"{cv_summary}\n\n---\nПереклад українською (для розуміння):\n{cv_summary_ua}"
+            ),
+        )
+    except Exception:
+        logger.exception("CV summary generation failed for %s / %s", telegram_id, vacancy.url)
 
     contact = await asyncio.to_thread(extract_contact_info, vacancy)
 
