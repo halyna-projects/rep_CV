@@ -43,9 +43,11 @@ _SYSTEM_INSTRUCTION = (
     "You are helping with a job search in Denmark. A search for '{keyword}' returned 0 results. "
     "You may call search_keyword with ONE alternative, broader, or synonymous DANISH term at a "
     "time, at most {max_attempts} times in total. "
-    "Always write one short sentence IN UKRAINIAN (українською) explaining why you're trying this "
-    "particular term, in the SAME response where you call the tool -- never just the sentence "
-    "alone. If your sentence concludes that '{keyword}' is a typo of or synonym for a real word, "
+    "MANDATORY FORMAT for every response that calls the tool: it MUST contain a text part with "
+    "one short sentence IN UKRAINIAN (українською) explaining why you're trying this particular "
+    "term, together with the tool call, in that same response. A tool call with no accompanying "
+    "text sentence is an invalid response -- always include both parts, never the tool call alone. "
+    "If your sentence concludes that '{keyword}' is a typo of or synonym for a real word, "
     "you MUST call the tool with that word in the same response; it is a mistake to write the "
     "conclusion and then not act on it. "
     "If an attempt returns results (count > 0), do NOT call the tool again -- you are done. "
@@ -101,9 +103,11 @@ def agentic_keyword_search(keyword: str) -> tuple[list[Vacancy], list[str], str 
         contents.append(candidate.content)
 
         function_call = None
+        had_text = False
         for part in candidate.content.parts:
             if part.text:
                 log.append(part.text.strip())
+                had_text = True
             if part.function_call:
                 function_call = part.function_call
 
@@ -114,6 +118,13 @@ def agentic_keyword_search(keyword: str) -> tuple[list[Vacancy], list[str], str 
         if not term or term.lower() in tried_terms:
             break  # no usable new term -- stop rather than guess
         tried_terms.add(term.lower())
+
+        if not had_text:
+            # Gemini occasionally calls the tool without the required
+            # explanation sentence despite the instruction below -- fall
+            # back to a minimal one so the person never sees a bare
+            # result line with no reason attached.
+            log.append(f"Пробую схоже слово «{term}».")
 
         try:
             results = raw_search_keyword(term)
