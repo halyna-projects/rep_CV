@@ -834,29 +834,38 @@ def _score_vacancies(telegram_id: int, vacancies: list, keywords: list[str]):
 NUMBER_HINT_HTML = "<b>Щоб отримати ansøgning під вакансію — надішліть її номер</b> (наприклад: 1)."
 
 
-async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def run_search(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, silent_when_empty: bool = False
+):
+    """silent_when_empty=True is for the autonomous background check
+    (bot/autonomous.py): it should only ever speak up when there's
+    something genuinely new to report, never announce "searching..." or
+    "nothing new" on a schedule nobody asked for -- that's exactly the
+    kind of noise that makes a person mute a bot."""
     telegram_id = update.effective_user.id
     missing = _missing_requirements(telegram_id)
     if missing:
-        await update.message.reply_text(
-            "Спочатку заповніть: " + ", ".join(missing),
-            reply_markup=build_keyboard(telegram_id),
-        )
-        return
+        if not silent_when_empty:
+            await update.message.reply_text(
+                "Спочатку заповніть: " + ", ".join(missing),
+                reply_markup=build_keyboard(telegram_id),
+            )
+        return False
 
     if not await _check_ai_quota(update, telegram_id):
-        return
+        return False
 
     keywords = storage.get_keywords(telegram_id)
     user = storage.get_user(telegram_id)
     location = (user or {}).get("location") or None
 
-    await send_with_retry(
-        update,
-        f"Шукаю за словами: {', '.join(keywords)}"
-        + (f" у {location}" if location else " по всій Данії")
-        + " ...",
-    )
+    if not silent_when_empty:
+        await send_with_retry(
+            update,
+            f"Шукаю за словами: {', '.join(keywords)}"
+            + (f" у {location}" if location else " по всій Данії")
+            + " ...",
+        )
 
     # Check each keyword on its own, not just the combined list -- with
     # several keywords, one of them returning 0 results used to be masked
@@ -888,7 +897,7 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         vacancies.extend(extra_vacancies)
 
-        if agent_notes:
+        if agent_notes and not silent_when_empty:
             await send_with_retry(update, "🤖 " + " ".join(agent_notes))
 
     vacancies = dedupe(vacancies)
@@ -901,6 +910,8 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_vacancies = [v for v in vacancies if v.url in unseen_urls or not v.url]
 
     if not new_vacancies:
+        if silent_when_empty:
+            return False
         if vacancies:
             await send_with_retry(
                 update,
@@ -916,7 +927,7 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "слово для нового пошуку.",
                 reply_markup=build_keyboard(telegram_id),
             )
-        return
+        return False
 
     scored = await asyncio.to_thread(_score_vacancies, telegram_id, new_vacancies, keywords)
     scored.sort(key=lambda triple: triple[1], reverse=True)
@@ -950,6 +961,7 @@ async def run_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_with_retry(
         update, footer, reply_markup=build_keyboard(telegram_id), parse_mode="HTML"
     )
+    return True
 
 
 async def _send_results_chunks(

@@ -53,6 +53,15 @@ async def autonomous_check(context: ContextTypes.DEFAULT_TYPE):
 
     try:
         fake_update = _FakeUpdate(context.bot, ADMIN_TELEGRAM_ID)
-        await run_search(fake_update, context)
+        found_something = await run_search(fake_update, context, silent_when_empty=True)
+        if not found_something:
+            # A short heartbeat rather than full silence -- while this is
+            # still a pilot, the person needs proof the scheduled check is
+            # actually firing, not just an absence of news that could
+            # equally mean the job died.
+            await context.bot.send_message(
+                chat_id=ADMIN_TELEGRAM_ID,
+                text="🤖 Автоматична перевірка: нових вакансій немає.",
+            )
     except Exception:
         logger.exception("Autonomous search run failed")
