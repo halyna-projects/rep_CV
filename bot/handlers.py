@@ -1011,6 +1011,14 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         safe_name = re.sub(r"[^\w\-]+", "_", vacancy.title)[:60] or "vacancy"
+        # Named after the person's own uploaded CV (not just "cv_...") plus
+        # this vacancy, so several tailored versions in a chat/downloads
+        # folder are still recognizable as "my CV" and distinguishable from
+        # each other at a glance.
+        own_cv_path = (storage.get_user(telegram_id) or {}).get("cv_path") or ""
+        own_cv_stem = Path(own_cv_path).stem or "CV"
+        own_cv_stem = re.sub(r"[^\w\-]+", "_", own_cv_stem)[:40]
+        cv_filename = f"{own_cv_stem}_{safe_name}.pdf"
         try:
             letter_pdf_path = Path(tmp_dir) / "letter.pdf"
             letter_to_pdf(letter, vacancy, str(letter_pdf_path))
@@ -1039,7 +1047,7 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
                 with open(cv_pdf_path, "rb") as f:
                     await message.reply_document(
                         document=f,
-                        filename=f"cv_{safe_name}.pdf",
+                        filename=cv_filename,
                         caption=(
                             "Готове CV з профілем під цю вакансію — можна подавати "
                             "як є, нічого не потрібно копіювати вручну."
@@ -1059,7 +1067,7 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
             if cv_summary_ua:
                 letter_ua_full = (
                     "До вашого CV додано короткий профіль під цю вакансію "
-                    f"(данською, у файлі cv_{safe_name}.pdf). Переклад профілю:\n\n"
+                    f"(данською, у файлі {cv_filename}). Переклад профілю:\n\n"
                     f"{cv_summary_ua}\n\n---\n\n"
                     "Рекомендаційний лист (переклад):\n\n"
                     f"{letter_ua}"
