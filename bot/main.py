@@ -11,6 +11,7 @@ from telegram.ext import (
 )
 
 from bot import handlers, storage
+from bot.autonomous import CHECK_INTERVAL_SECONDS, autonomous_check
 from bot.config import TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(
@@ -68,6 +69,12 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_plain_text)
     )
     app.add_error_handler(error_handler)
+
+    # Pilot: the agent checks for new vacancies on its own schedule,
+    # instead of only when someone presses a button -- admin-only for now.
+    app.job_queue.run_repeating(
+        autonomous_check, interval=CHECK_INTERVAL_SECONDS, first=CHECK_INTERVAL_SECONDS
+    )
 
     logging.info("Bot starting (polling)...")
     app.run_polling()

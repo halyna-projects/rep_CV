@@ -20,6 +20,7 @@ from bot.agentic_search import agentic_keyword_search
 from bot.danish_cities import resolve_city
 from bot.config import ADMIN_TELEGRAM_ID, FREE_TRIAL_AI_ACTIONS, UPLOADS_DIR
 from bot.contact_extraction import extract_contact_info
+from bot.cv_structurer import suggest_keywords
 from bot.letter_explainer import explain_letter_image, explain_letter_text
 from bot.letter_generation import generate_cover_letter, generate_cv_summary
 from bot.manual_vacancy import (
@@ -607,7 +608,22 @@ async def handle_cv_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    await _reply_with_next_step(update, telegram_id, f"CV зберіг: {filename}")
+    done_message = f"CV зберіг: {filename}"
+    # If keywords aren't set yet, don't just wait for the person to think
+    # of some -- suggest real Danish search terms straight from what's
+    # actually in the CV, the way a recruiter would skim it. They can
+    # still override via the Ключові слова button any time.
+    if not storage.get_keywords(telegram_id):
+        suggested = await asyncio.to_thread(suggest_keywords, cv_text)
+        if suggested:
+            storage.set_keywords(telegram_id, suggested)
+            done_message += (
+                "\n\nНа основі CV запропонував ключові слова: "
+                + ", ".join(suggested)
+                + f"\nМожна змінити через «{BTN_KEYWORDS}»."
+            )
+
+    await _reply_with_next_step(update, telegram_id, done_message)
 
 
 async def cv_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
