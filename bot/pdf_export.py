@@ -93,7 +93,17 @@ def vacancy_to_pdf(vacancy, output_path: str, contact=None):
     return output_path
 
 
+def _strip_markdown_asterisks(text: str) -> str:
+    """Gemini occasionally decides to bold a heading or phrase with
+    markdown (**like this**) despite nothing asking for it -- fpdf has no
+    markdown support, so it would otherwise print the literal asterisks.
+    Same fix as _strip_html applies to vacancy descriptions, needed here
+    for AI-generated letter/summary text instead."""
+    return re.sub(r"\*+", "", text or "")
+
+
 def letter_to_pdf(letter_text: str, vacancy, output_path: str):
+    letter_text = _strip_markdown_asterisks(letter_text)
     pdf = FPDF()
     pdf.add_font("DejaVu", "", str(REGULAR_FONT))
     pdf.add_font("DejaVu", "B", str(BOLD_FONT))
@@ -148,18 +158,32 @@ def _strip_existing_profil_section(cv_text: str) -> str:
     return cv_text
 
 
-def cv_to_pdf(cv_text: str, summary: str, output_path: str) -> str:
+def cv_to_pdf(cv_text: str, summary: str, output_path: str, vacancy_title: str = "") -> str:
     """A ready-to-submit CV PDF: the tailored profile up top, followed by
     the person's own CV content -- so applying doesn't require anyone to
     open a PDF, copy the summary out by hand, and re-save it as a CV
     themselves.
+
+    vacancy_title is printed as a clear "applying for" line -- otherwise
+    the only sign of which position this CV is tailored to is the tailored
+    Profil paragraph itself, while the person's own tagline underneath
+    (carried over unchanged from their original CV, e.g. a generic
+    "Bogholder") stays exactly as generic as it always was.
     """
     cv_text = _strip_existing_profil_section(cv_text)
+    summary = _strip_markdown_asterisks(summary)
     pdf = FPDF()
     pdf.add_font("DejaVu", "", str(REGULAR_FONT))
     pdf.add_font("DejaVu", "B", str(BOLD_FONT))
     pdf.add_page()
     pdf.set_margins(20, 20, 20)
+
+    if vacancy_title:
+        pdf.set_font("DejaVu", "", 10)
+        pdf.set_text_color(90, 90, 90)
+        pdf.multi_cell(0, 6, f"Ansøgning til stilling: {vacancy_title}")
+        pdf.set_text_color(0, 0, 0)
+        pdf.ln(2)
 
     pdf.set_font("DejaVu", "B", 13)
     pdf.multi_cell(0, 7, "Profil")

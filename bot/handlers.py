@@ -1087,7 +1087,7 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
 
             if cv_summary:
                 cv_pdf_path = Path(tmp_dir) / "cv.pdf"
-                cv_to_pdf(cv_text, cv_summary, str(cv_pdf_path))
+                cv_to_pdf(cv_text, cv_summary, str(cv_pdf_path), vacancy_title=vacancy.title)
                 with open(cv_pdf_path, "rb") as f:
                     await message.reply_document(
                         document=f,
