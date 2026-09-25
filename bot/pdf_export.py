@@ -112,6 +112,16 @@ def letter_to_pdf(letter_text: str, vacancy, output_path: str):
     return output_path
 
 
+# Common Danish/English CV section headings -- used to recognize where the
+# CV's own "Profil" paragraph ends even when the extracted text (pypdf/docx)
+# has no blank line separating sections at all.
+_SECTION_HEADING_RE = re.compile(
+    r"^(erhvervserfaring|uddannelse|kompetencer|sprog|kurser|certificeringer|"
+    r"referencer|experience|education|skills|languages|courses|references)\b",
+    re.IGNORECASE,
+)
+
+
 def _strip_existing_profil_section(cv_text: str) -> str:
     """Remove the CV's own "Profil"/"Profile" heading and paragraph, if
     present, so the freshly generated tailored one (inserted separately,
@@ -121,17 +131,16 @@ def _strip_existing_profil_section(cv_text: str) -> str:
     for i, line in enumerate(lines):
         if line.strip().lower() in ("profil", "profile"):
             j = i + 1
-            while j < len(lines) and lines[j].strip():
+            while j < len(lines):
+                stripped = lines[j].strip()
+                if not stripped or _SECTION_HEADING_RE.match(stripped):
+                    break
                 j += 1
             if j >= len(lines):
-                # No blank line found before the end of the document --
-                # extracted CV text (pypdf/docx) very often has none
-                # between sections at all, so this used to be read as
-                # "the profile section runs to the end of the file" and
-                # silently deleted everything after "Profil": the whole
-                # experience/education/skills content. Safer to leave a
-                # duplicate "Profil" heading than to risk deleting real
-                # CV content.
+                # Reached the end of the document without finding a blank
+                # line or a recognized next-section heading -- can't safely
+                # tell where "Profil" ends, so leave the CV untouched
+                # rather than risk deleting real content after it.
                 return cv_text
             while j < len(lines) and not lines[j].strip():
                 j += 1

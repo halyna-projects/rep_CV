@@ -133,7 +133,7 @@ def agentic_keyword_search(keyword: str) -> tuple[list[Vacancy], list[str], str 
             results = []
 
         found.extend(results)
-        log.append(f"→ Спробував «{term}»: знайдено {len(results)} вакансій.")
+        log.append(f"→ Спробував «{term}»: знайдено {len(results)} вакансій по всій Данії.")
 
         contents.append(
             types.Content(

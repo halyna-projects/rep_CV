@@ -949,9 +949,10 @@ async def run_search(
     # Said again at the end of the full list too, but that's easy to miss
     # if the person doesn't scroll past a long list -- show it right above
     # vacancy #1 as well, where they're actually looking.
+    found_suffix = f" у {location}" if location else ""
     await send_with_retry(
         update,
-        f"Знайшов {len(to_send)}. {NUMBER_HINT_HTML}",
+        f"Знайшов {len(to_send)}{found_suffix}. {NUMBER_HINT_HTML}",
         parse_mode="HTML",
     )
 
@@ -1035,6 +1036,12 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         update,
         f"{vacancy.title} — {vacancy.company}\n{vacancy.url}\n\n{letter}",
     )
+
+    # Several more AI calls and PDF/translation steps follow before the
+    # first file actually arrives -- without this, a slow response from
+    # the model (which varies run to run) leaves the person staring at
+    # silence with no sign anything is still happening.
+    await send_with_retry(update, "⏳ Готую CV, PDF-файли та переклади, зачекайте...")
 
     cv_summary = None
     cv_summary_ua = None
