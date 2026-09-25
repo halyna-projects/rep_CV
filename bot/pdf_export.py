@@ -123,6 +123,16 @@ def _strip_existing_profil_section(cv_text: str) -> str:
             j = i + 1
             while j < len(lines) and lines[j].strip():
                 j += 1
+            if j >= len(lines):
+                # No blank line found before the end of the document --
+                # extracted CV text (pypdf/docx) very often has none
+                # between sections at all, so this used to be read as
+                # "the profile section runs to the end of the file" and
+                # silently deleted everything after "Profil": the whole
+                # experience/education/skills content. Safer to leave a
+                # duplicate "Profil" heading than to risk deleting real
+                # CV content.
+                return cv_text
             while j < len(lines) and not lines[j].strip():
                 j += 1
             return "\n".join(lines[:i] + lines[j:])

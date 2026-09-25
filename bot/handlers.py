@@ -208,9 +208,12 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Прибрав повний доступ у користувача {target_id}.")
 
 
-# New users get FREE_TRIAL_AI_ACTIONS free searches/applications before
-# needing the admin to grant them full access via /grant -- the admin
-# (ADMIN_TELEGRAM_ID) and anyone already granted are exempt.
+# New users get FREE_TRIAL_AI_ACTIONS free applications (generating the
+# ansøgning + CV for a chosen vacancy number) before needing the admin to
+# grant them full access via /grant -- the admin (ADMIN_TELEGRAM_ID) and
+# anyone already granted are exempt. Deliberately NOT charged for
+# searching or adding a vacancy manually, so a trial user can actually
+# browse and see two full generated results before deciding.
 QUOTA_MESSAGE = (
     f"Ви використали безкоштовний ліміт ({FREE_TRIAL_AI_ACTIONS} дії). "
     "Щоб продовжити користуватися ботом, напишіть адміну, щоб отримати повний доступ."
@@ -654,9 +657,6 @@ async def _process_manual_vacancy(update: Update, telegram_id: int, vacancy) -> 
     normal "send its number" flow take it from there."""
     message = update.effective_message
 
-    if not await _check_ai_quota(update, telegram_id):
-        return
-
     cv_text = storage.get_cv_text(telegram_id)
     if not cv_text:
         await message.reply_text(
@@ -835,13 +835,20 @@ NUMBER_HINT_HTML = "<b>Щоб отримати ansøgning під вакансі�
 
 
 async def run_search(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, silent_when_empty: bool = False
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    silent_when_empty: bool = False,
+    min_percent: int | None = None,
 ):
     """silent_when_empty=True is for the autonomous background check
     (bot/autonomous.py): it should only ever speak up when there's
     something genuinely new to report, never announce "searching..." or
     "nothing new" on a schedule nobody asked for -- that's exactly the
-    kind of noise that makes a person mute a bot."""
+    kind of noise that makes a person mute a bot.
+
+    min_percent, also autonomous-only: drops low-match results before
+    they're ever shown or marked seen, so a weak match found tonight can
+    still surface later if a stronger one doesn't turn up first."""
     telegram_id = update.effective_user.id
     missing = _missing_requirements(telegram_id)
     if missing:
@@ -850,9 +857,6 @@ async def run_search(
                 "Спочатку заповніть: " + ", ".join(missing),
                 reply_markup=build_keyboard(telegram_id),
             )
-        return False
-
-    if not await _check_ai_quota(update, telegram_id):
         return False
 
     keywords = storage.get_keywords(telegram_id)
@@ -931,6 +935,11 @@ async def run_search(
 
     scored = await asyncio.to_thread(_score_vacancies, telegram_id, new_vacancies, keywords)
     scored.sort(key=lambda triple: triple[1], reverse=True)
+
+    if min_percent is not None:
+        scored = [triple for triple in scored if triple[1] >= min_percent]
+        if not scored:
+            return False
 
     MAX_RESULTS = 20
     to_send = scored[:MAX_RESULTS]

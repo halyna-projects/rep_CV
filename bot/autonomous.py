@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 # it behaves well (doesn't spam, doesn't re-announce old results).
 CHECK_INTERVAL_SECONDS = 6 * 60 * 60  # every 6 hours
 
+# Below this match %, a result isn't worth an unprompted interruption --
+# a manual /search still shows everything, this only trims the
+# autonomous run.
+MIN_AUTONOMOUS_MATCH_PERCENT = 50
+
 
 class _ChatMessageProxy:
     """Stands in for update.message / update.effective_message: routes
@@ -53,7 +58,12 @@ async def autonomous_check(context: ContextTypes.DEFAULT_TYPE):
 
     try:
         fake_update = _FakeUpdate(context.bot, ADMIN_TELEGRAM_ID)
-        found_something = await run_search(fake_update, context, silent_when_empty=True)
+        found_something = await run_search(
+            fake_update,
+            context,
+            silent_when_empty=True,
+            min_percent=MIN_AUTONOMOUS_MATCH_PERCENT,
+        )
         if not found_something:
             # A short heartbeat rather than full silence -- while this is
             # still a pilot, the person needs proof the scheduled check is
