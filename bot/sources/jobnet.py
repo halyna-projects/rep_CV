@@ -44,7 +44,11 @@ def search(keyword: str, results_per_page: int = 50, timeout: int = 20) -> list[
         ]
         location = " / ".join(p for p in location_parts if p)
 
-        url = ad.get("jobAdUrl") or f"https://jobnet.dk/job/{ad.get('jobAdId', '')}"
+        # Jobnet's own detail-page route: was /job/{id}, now /find-job/{id} --
+        # the old path started bouncing every visitor (even logged-in ones)
+        # to a MitID login wall that then 404s, regardless of whether the ad
+        # is actually still live.
+        url = ad.get("jobAdUrl") or f"https://jobnet.dk/find-job/{ad.get('jobAdId', '')}"
 
         vacancies.append(
             Vacancy(
