@@ -61,6 +61,7 @@ def main():
     app.add_handler(CommandHandler("reset", handlers.reset_seen))
     app.add_handler(CommandHandler("apply", handlers.apply_to_vacancy))
     app.add_handler(CommandHandler("stats", handlers.stats))
+    app.add_handler(CommandHandler("checkid", handlers.checkid))
     app.add_handler(CommandHandler("grant", handlers.grant))
     app.add_handler(CommandHandler("revoke", handlers.revoke))
     app.add_handler(CallbackQueryHandler(handlers.handle_callback))

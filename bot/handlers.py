@@ -190,6 +190,20 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def checkid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_TELEGRAM_ID:
+        return
+    if not context.args or not context.args[0].lstrip("-").isdigit():
+        await update.message.reply_text("Формат: /checkid 123456789 (telegram ID)")
+        return
+    target_id = int(context.args[0])
+    user = storage.get_user(target_id)
+    if user is None:
+        await update.message.reply_text(f"{target_id}: немає в базі (ще не запускав бота).")
+    else:
+        await update.message.reply_text(f"{target_id}: є в базі користувачів.")
+
+
 async def grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_TELEGRAM_ID:
         return

@@ -33,7 +33,7 @@ ADMIN_TELEGRAM_ID = 2104700983
 
 # Own test accounts excluded from /stats counts (not real users) --
 # includes the admin's own account, so /stats shows only actual testers.
-EXCLUDED_TELEGRAM_IDS = {7644385945, ADMIN_TELEGRAM_ID}
+EXCLUDED_TELEGRAM_IDS = {7644385945, 8794354329, ADMIN_TELEGRAM_ID}
 
 # New users get this many free AI actions (search/manual-add/apply) before
 # being asked to wait for the admin to grant them full access via /grant --
