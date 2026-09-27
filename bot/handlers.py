@@ -182,6 +182,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📊 Статистика бота\n\n"
         f"Всього унікальних людей, що запускали бота: {s['total']}\n"
+        f"Нових сьогодні: {s['new_today']}\n"
+        f"Нових за 7 днів: {s['new_7d']}\n"
         f"Завантажили CV: {s['with_cv']}\n"
         f"Задали ключові слова: {s['with_keywords']}\n"
         f"Вказали місто: {s['with_location']}\n"

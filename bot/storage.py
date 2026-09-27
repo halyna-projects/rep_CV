@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_search_keywords TEXT DEFAULT NULL,
     letters_explained_count INTEGER DEFAULT 0,
     ai_actions_count INTEGER DEFAULT 0,
-    granted INTEGER DEFAULT 0
+    granted INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS seen_vacancies (
@@ -64,6 +65,14 @@ def init_db():
             )
         if "granted" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN granted INTEGER DEFAULT 0")
+        if "created_at" not in columns:
+            # Backfilled rows get "now" as created_at, not their real join
+            # date (that was never recorded) -- only new signups from here
+            # on have an accurate date.
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN created_at TIMESTAMP "
+                "DEFAULT CURRENT_TIMESTAMP"
+            )
 
 
 def get_user(telegram_id: int):
@@ -288,11 +297,23 @@ def get_stats() -> dict:
             f"WHERE {exclude_clause}",
             params,
         ).fetchone()["n"]
+        new_today = conn.execute(
+            f"SELECT COUNT(*) AS n FROM users WHERE {exclude_clause} "
+            "AND date(created_at) = date('now')",
+            params,
+        ).fetchone()["n"]
+        new_7d = conn.execute(
+            f"SELECT COUNT(*) AS n FROM users WHERE {exclude_clause} "
+            "AND created_at >= datetime('now', '-7 days')",
+            params,
+        ).fetchone()["n"]
     return {
         "total": total,
         "with_cv": with_cv,
         "with_keywords": with_keywords,
         "with_location": with_location,
+        "new_today": new_today,
+        "new_7d": new_7d,
         "searched": searched,
         "used_letter_explain": used_letter_explain,
         "letters_explained_total": letters_explained_total,
