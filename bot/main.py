@@ -53,6 +53,7 @@ def main():
 
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_cmd))
+    app.add_handler(CommandHandler("myid", handlers.myid))
     app.add_handler(CommandHandler("keywords", handlers.set_keywords))
     app.add_handler(CommandHandler("location", handlers.set_location))
     app.add_handler(CommandHandler("cv", handlers.cv_status))
