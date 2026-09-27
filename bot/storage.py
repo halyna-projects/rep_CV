@@ -66,12 +66,18 @@ def init_db():
         if "granted" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN granted INTEGER DEFAULT 0")
         if "created_at" not in columns:
-            # Backfilled rows get "now" as created_at, not their real join
-            # date (that was never recorded) -- only new signups from here
-            # on have an accurate date.
+            # SQLite refuses a non-constant default (CURRENT_TIMESTAMP) on
+            # ALTER TABLE ADD COLUMN once the table already has rows -- add
+            # it as NULL, then backfill separately. Backfilled rows get
+            # "now" as created_at, not their real join date (that was never
+            # recorded) -- only new signups from here on have an accurate
+            # date.
             conn.execute(
-                "ALTER TABLE users ADD COLUMN created_at TIMESTAMP "
-                "DEFAULT CURRENT_TIMESTAMP"
+                "ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT NULL"
+            )
+            conn.execute(
+                "UPDATE users SET created_at = CURRENT_TIMESTAMP "
+                "WHERE created_at IS NULL"
             )
 
 
@@ -85,8 +91,13 @@ def get_user(telegram_id: int):
 
 def ensure_user(telegram_id: int):
     with get_conn() as conn:
+        # created_at is set explicitly rather than relied on as a column
+        # default: on a DB that went through the created_at migration (see
+        # init_db), the column's own default is NULL, not CURRENT_TIMESTAMP.
         conn.execute(
-            "INSERT OR IGNORE INTO users (telegram_id) VALUES (?)", (telegram_id,)
+            "INSERT OR IGNORE INTO users (telegram_id, created_at) "
+            "VALUES (?, CURRENT_TIMESTAMP)",
+            (telegram_id,),
         )
 
 
