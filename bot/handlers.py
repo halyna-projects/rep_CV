@@ -1015,7 +1015,7 @@ async def _send_results_chunks(
 def _apply_keyboard():
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🔍 Перевірити на вигадані факти", callback_data="verify")],
+            [InlineKeyboardButton("❓ Перевірити на вигадані факти", callback_data="verify")],
             [InlineKeyboardButton("📋 Показати список знову", callback_data="relist")],
         ]
     )
@@ -1221,7 +1221,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await _check_ai_quota(update, telegram_id):
             return
 
-        await update.effective_message.reply_text("🔍 Звіряю лист і CV з оригіналом...")
+        await update.effective_message.reply_text("❓ Звіряю лист і CV з оригіналом...")
         try:
             result = await asyncio.to_thread(
                 verify_application,
