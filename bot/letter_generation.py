@@ -156,6 +156,84 @@ def verify_application(
         return {"clean": True, "issues": [], "uncovered_areas": [], "error": True}
 
 
+FIX_PROMPT_TEMPLATE = """You previously wrote an ansøgning (cover letter) and CV summary for a candidate, and a separate Verify pass found specific problems with them. Your job now is to produce a corrected version that fixes exactly those problems -- nothing more, nothing less. Don't rewrite unrelated parts, don't introduce new claims.
+
+ORIGINAL CV (the only source of truth):
+---
+{cv_text}
+---
+
+VACANCY:
+Title: {title}
+Company: {company}
+Description: {description}
+
+CURRENT COVER LETTER (to be corrected):
+---
+{letter}
+---
+
+CURRENT CV SUMMARY (to be corrected):
+---
+{cv_summary}
+---
+
+PROBLEMS FOUND BY VERIFY THAT MUST BE FIXED:
+{problems}
+
+Rules for the fix:
+- For each FACT-CHECK issue: remove or rephrase the flagged claim so it's fully backed by the original CV -- if the CV has nothing to support it, drop the claim rather than softening it into something still unsupported.
+- For each UNCOVERED AREA: add a short, honest sentence addressing it -- either real relevant experience from the CV if it exists, or a brief honest acknowledgment that it's not part of the candidate's background, framed as willingness to learn (never invent experience to cover the gap).
+- Keep the same language ({language}) and overall tone/structure as the current letter.
+- Rely ONLY on real facts from the CV -- never invent skills, tools, or experience. Never name a specific AI tool/product brand (e.g. Claude Code, ChatGPT, Copilot) as something the candidate personally uses, unless that exact brand name is written in the original CV.
+
+Respond with ONLY a JSON object, no other text:
+{{"letter": "the full corrected cover letter text", "cv_summary": "the full corrected CV summary paragraph"}}
+"""
+
+
+def fix_application(
+    cv_text: str,
+    vacancy: Vacancy,
+    letter: str,
+    cv_summary: str | None,
+    issues: list[dict],
+    uncovered_areas: list[dict],
+) -> dict:
+    """Takes a Verify result (issues + uncovered_areas) and asks Gemini for
+    a targeted correction -- addressing exactly those findings, not a
+    blind full regeneration that has no memory of what was wrong. Returns
+    {"letter": str, "cv_summary": str}; raises on failure (caller handles
+    the error message, same as generate_cover_letter)."""
+    problem_lines = []
+    for issue in issues:
+        problem_lines.append(
+            f"- FACT-CHECK: \"{issue.get('quote', '')}\" -- {issue.get('problem', '')}"
+        )
+    for area in uncovered_areas:
+        problem_lines.append(
+            f"- UNCOVERED: {area.get('area', '')} -- {area.get('why', '')}"
+        )
+    problems = "\n".join(problem_lines) or "(none listed)"
+
+    prompt = FIX_PROMPT_TEMPLATE.format(
+        cv_text=truncate(cv_text, MAX_CV_CHARS),
+        title=vacancy.title,
+        company=vacancy.company,
+        description=truncate(vacancy.description, MAX_DESCRIPTION_CHARS),
+        letter=letter,
+        cv_summary=cv_summary or "(not generated)",
+        problems=problems,
+        language=_pick_language(vacancy),
+    )
+    response = generate_with_retry(prompt, json_mode=True)
+    data = json.loads(response.text)
+    return {
+        "letter": (data.get("letter") or letter).strip(),
+        "cv_summary": (data.get("cv_summary") or cv_summary or "").strip() or None,
+    }
+
+
 def generate_cv_summary(cv_text: str, vacancy: Vacancy) -> str:
     prompt = SUMMARY_PROMPT_TEMPLATE.format(
         cv_text=truncate(cv_text, MAX_CV_CHARS),

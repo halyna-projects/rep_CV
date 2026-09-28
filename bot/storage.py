@@ -217,9 +217,31 @@ def get_last_application(telegram_id: int) -> dict | None:
             "vacancy": Vacancy(**data["vacancy"]),
             "letter": data["letter"],
             "cv_summary": data.get("cv_summary"),
+            "verify": data.get("verify"),
         }
     except (json.JSONDecodeError, KeyError, TypeError):
         return None
+
+
+def set_last_verify_result(telegram_id: int, result: dict):
+    """Stashes the last Verify result (issues + uncovered_areas) onto the
+    same last_application row, so the "🔧 Fix" button can hand it straight
+    to fix_application() without the person re-running Verify or
+    re-pasting anything."""
+    user = get_user(telegram_id)
+    raw = (user or {}).get("last_application")
+    if not raw:
+        return
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return
+    data["verify"] = result
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET last_application = ? WHERE telegram_id = ?",
+            (json.dumps(data), telegram_id),
+        )
 
 
 def set_last_search_keywords(telegram_id: int, keywords: list[str]):

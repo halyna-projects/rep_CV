@@ -22,7 +22,12 @@ from bot.config import ADMIN_TELEGRAM_ID, FREE_TRIAL_AI_ACTIONS, UPLOADS_DIR
 from bot.contact_extraction import extract_contact_info
 from bot.cv_structurer import suggest_keywords
 from bot.letter_explainer import explain_letter_image, explain_letter_text
-from bot.letter_generation import generate_cover_letter, generate_cv_summary, verify_application
+from bot.letter_generation import (
+    fix_application,
+    generate_cover_letter,
+    generate_cv_summary,
+    verify_application,
+)
 from bot.manual_vacancy import (
     extract_vacancy_from_image,
     extract_vacancy_from_text,
@@ -1290,6 +1295,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         issues = result["issues"]
         uncovered = result["uncovered_areas"]
+        storage.set_last_verify_result(telegram_id, result)
 
         if not issues and not uncovered:
             await update.effective_message.reply_text(
@@ -1313,7 +1319,93 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name = html.escape(area.get("area", ""))
                 why = html.escape(area.get("why", ""))
                 lines.append(f"• {name}\n  {why}")
-        await update.effective_message.reply_text("\n\n".join(lines), parse_mode="HTML")
+        fix_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔧 Виправити на основі Verify", callback_data="fix_letter")]]
+        )
+        await update.effective_message.reply_text(
+            "\n\n".join(lines), parse_mode="HTML", reply_markup=fix_keyboard
+        )
+        return
+
+    if data == "fix_letter":
+        application = storage.get_last_application(telegram_id)
+        if not application or not application.get("verify"):
+            await update.effective_message.reply_text(
+                "Спочатку запустіть перевірку ❓ — виправляти поки що нічого."
+            )
+            return
+        cv_text = storage.get_cv_text(telegram_id)
+        if not cv_text:
+            await update.effective_message.reply_text(
+                f"Не знайшов текст вашого CV — надішліть файл ще раз через {BTN_CV}."
+            )
+            return
+        if not await _check_ai_quota(update, telegram_id):
+            return
+        if not await asyncio.to_thread(gemini_is_available):
+            await update.effective_message.reply_text(
+                "⚠️ Gemini зараз недоступний. Спробуйте виправити ще раз через кілька хвилин."
+            )
+            return
+
+        verify_result = application["verify"]
+        vacancy = application["vacancy"]
+        await update.effective_message.reply_text("🔧 Виправляю лист на основі знахідок Verify...")
+        try:
+            fixed = await asyncio.to_thread(
+                fix_application,
+                cv_text,
+                vacancy,
+                application["letter"],
+                application["cv_summary"],
+                verify_result.get("issues") or [],
+                verify_result.get("uncovered_areas") or [],
+            )
+        except Exception:
+            logger.exception("Fix failed for %s", telegram_id)
+            await update.effective_message.reply_text(
+                "Не вдалося виправити лист (збій на боці моделі). Спробуйте ще раз."
+            )
+            return
+
+        storage.set_last_application(telegram_id, vacancy, fixed["letter"], fixed["cv_summary"])
+
+        await update.effective_message.reply_text(
+            f"{vacancy.title} — {vacancy.company}\n\n{fixed['letter']}"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            safe_name = re.sub(r"[^\w\-]+", "_", vacancy.title)[:60] or "vacancy"
+            own_cv_path = (storage.get_user(telegram_id) or {}).get("cv_path") or ""
+            own_cv_stem = re.sub(r"[^\w\-]+", "_", Path(own_cv_path).stem or "CV")[:40]
+            try:
+                letter_pdf_path = Path(tmp_dir) / "letter.pdf"
+                letter_to_pdf(fixed["letter"], vacancy, str(letter_pdf_path))
+                with open(letter_pdf_path, "rb") as f:
+                    await update.effective_message.reply_document(
+                        document=f,
+                        filename=f"ansogning_{safe_name}_fixed.pdf",
+                        caption="Виправлена ansøgning у PDF.",
+                    )
+                if fixed["cv_summary"]:
+                    cv_pdf_path = Path(tmp_dir) / "cv.pdf"
+                    cv_to_pdf(cv_text, fixed["cv_summary"], str(cv_pdf_path), vacancy_title=vacancy.title)
+                    with open(cv_pdf_path, "rb") as f:
+                        await update.effective_message.reply_document(
+                            document=f,
+                            filename=f"{own_cv_stem}_{safe_name}_fixed.pdf",
+                            caption="Виправлене CV у PDF.",
+                        )
+            except Exception:
+                logger.exception("Fixed PDF export failed for %s / %s", telegram_id, vacancy.url)
+                await update.effective_message.reply_text(
+                    "Текст виправлено, але не вдалося зробити PDF-файли."
+                )
+
+        await update.effective_message.reply_text(
+            "Готово. Радимо запустити ❓ Verify ще раз, щоб перевірити виправлену версію.",
+            reply_markup=_apply_keyboard(),
+        )
         return
 
     if data == "relist":
