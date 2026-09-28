@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
     letters_explained_count INTEGER DEFAULT 0,
     ai_actions_count INTEGER DEFAULT 0,
     granted INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_application TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS seen_vacancies (
@@ -78,6 +79,10 @@ def init_db():
             conn.execute(
                 "UPDATE users SET created_at = CURRENT_TIMESTAMP "
                 "WHERE created_at IS NULL"
+            )
+        if "last_application" not in columns:
+            conn.execute(
+                "ALTER TABLE users ADD COLUMN last_application TEXT DEFAULT NULL"
             )
 
 
@@ -182,6 +187,39 @@ def set_last_results(telegram_id: int, scored: list[tuple[Vacancy, int, str]]):
             "UPDATE users SET last_results = ? WHERE telegram_id = ?",
             (payload, telegram_id),
         )
+
+
+def set_last_application(telegram_id: int, vacancy: Vacancy, letter: str, cv_summary: str | None):
+    """Persists the vacancy + freshly generated letter/CV summary from the
+    last /apply, so the "🔍 Verify" button can cross-check them against the
+    person's real CV without asking them to re-upload anything -- the bot
+    already has all four pieces (vacancy, original CV, letter, CV summary)
+    right after generation."""
+    ensure_user(telegram_id)
+    payload = json.dumps(
+        {"vacancy": asdict(vacancy), "letter": letter, "cv_summary": cv_summary}
+    )
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET last_application = ? WHERE telegram_id = ?",
+            (payload, telegram_id),
+        )
+
+
+def get_last_application(telegram_id: int) -> dict | None:
+    user = get_user(telegram_id)
+    raw = (user or {}).get("last_application")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return {
+            "vacancy": Vacancy(**data["vacancy"]),
+            "letter": data["letter"],
+            "cv_summary": data.get("cv_summary"),
+        }
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
 
 
 def set_last_search_keywords(telegram_id: int, keywords: list[str]):

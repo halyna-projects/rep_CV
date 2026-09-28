@@ -22,7 +22,7 @@ from bot.config import ADMIN_TELEGRAM_ID, FREE_TRIAL_AI_ACTIONS, UPLOADS_DIR
 from bot.contact_extraction import extract_contact_info
 from bot.cv_structurer import suggest_keywords
 from bot.letter_explainer import explain_letter_image, explain_letter_text
-from bot.letter_generation import generate_cover_letter, generate_cv_summary
+from bot.letter_generation import generate_cover_letter, generate_cv_summary, verify_application
 from bot.manual_vacancy import (
     extract_vacancy_from_image,
     extract_vacancy_from_text,
@@ -1014,7 +1014,10 @@ async def _send_results_chunks(
 
 def _apply_keyboard():
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📋 Показати список знову", callback_data="relist")]]
+        [
+            [InlineKeyboardButton("🔍 Перевірити на вигадані факти", callback_data="verify")],
+            [InlineKeyboardButton("📋 Показати список знову", callback_data="relist")],
+        ]
     )
 
 
@@ -1070,6 +1073,8 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         cv_summary_ua = await asyncio.to_thread(translate_to_ukrainian, cv_summary)
     except Exception:
         logger.exception("CV summary generation failed for %s / %s", telegram_id, vacancy.url)
+
+    storage.set_last_application(telegram_id, vacancy, letter, cv_summary)
 
     contact = await asyncio.to_thread(extract_contact_info, vacancy)
 
@@ -1198,6 +1203,57 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("apply:"):
         index = int(data.split(":", 1)[1])
         await _apply_to_vacancy_core(update, context, index)
+        return
+
+    if data == "verify":
+        application = storage.get_last_application(telegram_id)
+        if not application:
+            await update.effective_message.reply_text(
+                f"Спочатку згенеруйте лист і CV через {BTN_SEARCH} → номер вакансії."
+            )
+            return
+        cv_text = storage.get_cv_text(telegram_id)
+        if not cv_text:
+            await update.effective_message.reply_text(
+                f"Не знайшов текст вашого CV — надішліть файл ще раз через {BTN_CV}."
+            )
+            return
+        if not await _check_ai_quota(update, telegram_id):
+            return
+
+        await update.effective_message.reply_text("🔍 Звіряю лист і CV з оригіналом...")
+        try:
+            result = await asyncio.to_thread(
+                verify_application,
+                cv_text,
+                application["vacancy"],
+                application["letter"],
+                application["cv_summary"],
+            )
+        except Exception:
+            logger.exception("Verify failed for %s", telegram_id)
+            await update.effective_message.reply_text(
+                "Не вдалося виконати перевірку (збій на боці моделі). Спробуйте ще раз."
+            )
+            return
+
+        if result.get("error"):
+            await update.effective_message.reply_text(
+                "Перевірка не завершилась коректно — результат непереконливий, спробуйте ще раз."
+            )
+        elif result["clean"] and not result["issues"]:
+            await update.effective_message.reply_text(
+                "✅ Перевірка пройдена: усе, що написано в листі й CV, підтверджується вашим оригінальним CV."
+            )
+        else:
+            lines = ["⚠️ Знайдено твердження, які не підтверджуються оригінальним CV:\n"]
+            for issue in result["issues"]:
+                quote = html.escape(issue.get("quote", ""))
+                problem = html.escape(issue.get("problem", ""))
+                lines.append(f"• «{quote}»\n  {problem}")
+            await update.effective_message.reply_text(
+                "\n\n".join(lines), parse_mode="HTML"
+            )
         return
 
     if data == "relist":

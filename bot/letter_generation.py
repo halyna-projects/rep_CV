@@ -4,6 +4,8 @@ this project: highlight genuine overlap, name real gaps honestly instead of
 inventing experience that isn't in the CV.
 """
 
+import json
+
 from bot.gemini_client import MAX_CV_CHARS, generate_with_retry, truncate
 from bot.sources import Vacancy
 
@@ -55,6 +57,42 @@ Write the summary in {language}. Requirements:
 """
 
 
+VERIFY_PROMPT_TEMPLATE = """You are doing a strict fact-check pass: verify that a generated ansøgning (cover letter) and CV summary contain nothing that isn't backed by the candidate's real, original CV -- catching anything the generation step may have embellished or invented, even unintentionally.
+
+ORIGINAL CV (the only source of truth -- anything not traceable to this text is unverified):
+---
+{cv_text}
+---
+
+VACANCY (for context only -- do not treat vacancy wording as a source of facts about the candidate):
+Title: {title}
+Company: {company}
+Description: {description}
+
+GENERATED COVER LETTER:
+---
+{letter}
+---
+
+GENERATED CV SUMMARY:
+---
+{cv_summary}
+---
+
+Check both generated texts against the ORIGINAL CV only. Flag:
+- Any skill, tool, employer, number, or achievement claimed in the letter/summary that is not actually present in the original CV (even if it sounds plausible or is a reasonable-sounding embellishment)
+- Any specific AI tool/product brand name (e.g. Claude Code, ChatGPT, Copilot) presented as something the candidate personally uses, unless that exact brand name is written in the original CV
+- Any language proficiency claim ("native speaker" etc.) that overstates what the original CV actually states
+- Any case where the letter/summary claims the candidate lacks a skill that is in fact mentioned in the original CV
+
+Do NOT flag: honest gap disclosures, general phrasing, or claims that genuinely are traceable to the original CV even if reworded.
+
+Respond with ONLY a JSON object, no other text:
+{{"clean": true/false, "issues": [{{"quote": "the exact problematic phrase from the letter or summary", "problem": "one sentence explaining what in the original CV does NOT support this"}}]}}
+If nothing is wrong, return {{"clean": true, "issues": []}}.
+"""
+
+
 def _pick_language(vacancy: Vacancy) -> str:
     # Crude heuristic: Danish job ads use these words constantly; English
     # ones (like Collectia's) explicitly say so. Good enough for a first
@@ -78,6 +116,32 @@ def generate_cover_letter(cv_text: str, vacancy: Vacancy) -> str:
 
     response = generate_with_retry(prompt, json_mode=False)
     return response.text.strip()
+
+
+def verify_application(
+    cv_text: str, vacancy: Vacancy, letter: str, cv_summary: str | None
+) -> dict:
+    """Cross-checks a generated letter/CV summary against the person's real
+    CV -- catches claims the generation step introduced that aren't
+    actually traceable to the original CV. Returns
+    {"clean": bool, "issues": [{"quote": ..., "problem": ...}]}; on any
+    failure (model error, bad JSON) returns clean=True with an "error" key
+    rather than raising, so a verify hiccup never looks like a false-clean
+    pass -- the caller checks for "error" and reports it as inconclusive."""
+    prompt = VERIFY_PROMPT_TEMPLATE.format(
+        cv_text=truncate(cv_text, MAX_CV_CHARS),
+        title=vacancy.title,
+        company=vacancy.company,
+        description=truncate(vacancy.description, MAX_DESCRIPTION_CHARS),
+        letter=letter,
+        cv_summary=cv_summary or "(not generated)",
+    )
+    try:
+        response = generate_with_retry(prompt, json_mode=True)
+        data = json.loads(response.text)
+        return {"clean": bool(data.get("clean")), "issues": data.get("issues") or []}
+    except Exception:
+        return {"clean": True, "issues": [], "error": True}
 
 
 def generate_cv_summary(cv_text: str, vacancy: Vacancy) -> str:
