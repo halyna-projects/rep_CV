@@ -1241,19 +1241,34 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text(
                 "Перевірка не завершилась коректно — результат непереконливий, спробуйте ще раз."
             )
-        elif result["clean"] and not result["issues"]:
+            return
+
+        issues = result["issues"]
+        uncovered = result["uncovered_areas"]
+
+        if not issues and not uncovered:
             await update.effective_message.reply_text(
-                "✅ Перевірка пройдена: усе, що написано в листі й CV, підтверджується вашим оригінальним CV."
+                "✅ Перевірка пройдена: усе, що написано в листі й CV, підтверджується вашим "
+                "оригінальним CV, і всі ключові вимоги вакансії якось покриті."
             )
-        else:
-            lines = ["⚠️ Знайдено твердження, які не підтверджуються оригінальним CV:\n"]
-            for issue in result["issues"]:
+            return
+
+        lines = []
+        if issues:
+            lines.append("⚠️ Знайдено твердження, які не підтверджуються оригінальним CV:\n")
+            for issue in issues:
                 quote = html.escape(issue.get("quote", ""))
                 problem = html.escape(issue.get("problem", ""))
                 lines.append(f"• «{quote}»\n  {problem}")
-            await update.effective_message.reply_text(
-                "\n\n".join(lines), parse_mode="HTML"
-            )
+        if uncovered:
+            if lines:
+                lines.append("")
+            lines.append("📋 Не покрито в листі (ні позитивно, ні як чесна прогалина):\n")
+            for area in uncovered:
+                name = html.escape(area.get("area", ""))
+                why = html.escape(area.get("why", ""))
+                lines.append(f"• {name}\n  {why}")
+        await update.effective_message.reply_text("\n\n".join(lines), parse_mode="HTML")
         return
 
     if data == "relist":

@@ -57,14 +57,14 @@ Write the summary in {language}. Requirements:
 """
 
 
-VERIFY_PROMPT_TEMPLATE = """You are doing a strict fact-check pass: verify that a generated ansøgning (cover letter) and CV summary contain nothing that isn't backed by the candidate's real, original CV -- catching anything the generation step may have embellished or invented, even unintentionally.
+VERIFY_PROMPT_TEMPLATE = """You are doing two separate checks on a generated ansøgning (cover letter) and CV summary: a FACT-CHECK against the candidate's real CV, and a COVERAGE check against the vacancy's own requirements.
 
-ORIGINAL CV (the only source of truth -- anything not traceable to this text is unverified):
+ORIGINAL CV (the only source of truth for facts about the candidate -- anything not traceable to this text is unverified):
 ---
 {cv_text}
 ---
 
-VACANCY (for context only -- do not treat vacancy wording as a source of facts about the candidate):
+VACANCY (source of truth for what the ROLE requires -- do not treat its wording as a source of facts about the candidate):
 Title: {title}
 Company: {company}
 Description: {description}
@@ -79,17 +79,22 @@ GENERATED CV SUMMARY:
 {cv_summary}
 ---
 
-Check both generated texts against the ORIGINAL CV only. Flag:
+CHECK 1 -- FACT-CHECK. Check both generated texts against the ORIGINAL CV only. Flag:
 - Any skill, tool, employer, number, or achievement claimed in the letter/summary that is not actually present in the original CV (even if it sounds plausible or is a reasonable-sounding embellishment)
 - Any specific AI tool/product brand name (e.g. Claude Code, ChatGPT, Copilot) presented as something the candidate personally uses, unless that exact brand name is written in the original CV
 - Any language proficiency claim ("native speaker" etc.) that overstates what the original CV actually states
 - Any case where the letter/summary claims the candidate lacks a skill that is in fact mentioned in the original CV
-
 Do NOT flag: honest gap disclosures, general phrasing, or claims that genuinely are traceable to the original CV even if reworded.
 
+CHECK 2 -- COVERAGE. Identify the vacancy's major distinct requirement/responsibility categories (e.g. if a role blends two disciplines, such as "Product Owner" and "Analytics Engineer", that is two categories). For each major category that the cover letter does NOT address at all -- neither claiming relevant experience nor honestly acknowledging it as a gap -- flag it as uncovered. Do NOT flag a category that the letter addresses in any way, including an honest "I don't have this, but..." disclosure -- only flag categories the letter is silent about entirely.
+
 Respond with ONLY a JSON object, no other text:
-{{"clean": true/false, "issues": [{{"quote": "the exact problematic phrase from the letter or summary", "problem": "one sentence explaining what in the original CV does NOT support this"}}]}}
-If nothing is wrong, return {{"clean": true, "issues": []}}.
+{{
+  "clean": true/false,
+  "issues": [{{"quote": "the exact problematic phrase from the letter or summary", "problem": "one sentence explaining what in the original CV does NOT support this"}}],
+  "uncovered_areas": [{{"area": "short name of the requirement category from the vacancy", "why": "one sentence on what the vacancy asks for here that the letter never addresses"}}]
+}}
+If nothing is wrong and everything major is addressed, return {{"clean": true, "issues": [], "uncovered_areas": []}}.
 """
 
 
@@ -121,13 +126,16 @@ def generate_cover_letter(cv_text: str, vacancy: Vacancy) -> str:
 def verify_application(
     cv_text: str, vacancy: Vacancy, letter: str, cv_summary: str | None
 ) -> dict:
-    """Cross-checks a generated letter/CV summary against the person's real
-    CV -- catches claims the generation step introduced that aren't
-    actually traceable to the original CV. Returns
-    {"clean": bool, "issues": [{"quote": ..., "problem": ...}]}; on any
-    failure (model error, bad JSON) returns clean=True with an "error" key
-    rather than raising, so a verify hiccup never looks like a false-clean
-    pass -- the caller checks for "error" and reports it as inconclusive."""
+    """Cross-checks a generated letter/CV summary two ways: fact-check
+    against the person's real CV (claims the generation step introduced
+    that aren't traceable to the original), and coverage check against the
+    vacancy (major requirement categories the letter never addresses at
+    all, positively or as an honest gap). Returns {"clean": bool,
+    "issues": [{"quote": ..., "problem": ...}],
+    "uncovered_areas": [{"area": ..., "why": ...}]}; on any failure (model
+    error, bad JSON) returns clean=True with an "error" key rather than
+    raising, so a verify hiccup never looks like a false-clean pass -- the
+    caller checks for "error" and reports it as inconclusive."""
     prompt = VERIFY_PROMPT_TEMPLATE.format(
         cv_text=truncate(cv_text, MAX_CV_CHARS),
         title=vacancy.title,
@@ -139,9 +147,13 @@ def verify_application(
     try:
         response = generate_with_retry(prompt, json_mode=True)
         data = json.loads(response.text)
-        return {"clean": bool(data.get("clean")), "issues": data.get("issues") or []}
+        return {
+            "clean": bool(data.get("clean")),
+            "issues": data.get("issues") or [],
+            "uncovered_areas": data.get("uncovered_areas") or [],
+        }
     except Exception:
-        return {"clean": True, "issues": [], "error": True}
+        return {"clean": True, "issues": [], "uncovered_areas": [], "error": True}
 
 
 def generate_cv_summary(cv_text: str, vacancy: Vacancy) -> str:
