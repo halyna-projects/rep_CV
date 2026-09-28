@@ -31,6 +31,7 @@ from bot.manual_vacancy import (
 from bot.matching import compute_match
 from bot.pdf_export import _strip_html, cv_to_pdf, letter_to_pdf, vacancy_to_pdf
 from bot.search import search_keyword
+from bot.gemini_client import is_available as gemini_is_available
 from bot.semantic_matching import is_configured as semantic_matching_configured
 from bot.semantic_matching import semantic_match_batch
 from bot.sources import dedupe
@@ -1079,6 +1080,14 @@ async def _apply_to_vacancy_core(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if not await _check_ai_quota(update, telegram_id):
+        return
+
+    if not await asyncio.to_thread(gemini_is_available):
+        await message.reply_text(
+            "⚠️ Gemini зараз недоступний (перевантажений — це буває вдень). "
+            "Спроба згенерувати заявку зараз, найімовірніше, теж не "
+            "спрацює. Спробуйте ще раз через кілька хвилин."
+        )
         return
 
     vacancy, percent, detail = results[index - 1]

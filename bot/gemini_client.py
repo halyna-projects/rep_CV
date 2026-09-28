@@ -23,6 +23,19 @@ def is_configured() -> bool:
     return bool(GEMINI_API_KEY)
 
 
+def is_available() -> bool:
+    """Cheap, single-attempt probe (no retries) so callers can fail fast
+    and tell the person up front, instead of only finding out Gemini is
+    down after the full generation flow has already burned through
+    generate_with_retry's retries/backoff (which can take minutes across
+    several sequential calls) -- see the /apply hang this was built for."""
+    try:
+        generate_with_retry("OK", retries=0)
+        return True
+    except genai_errors.ServerError:
+        return False
+
+
 def get_client():
     global _client
     if _client is None:
