@@ -79,14 +79,14 @@ GENERATED CV SUMMARY:
 {cv_summary}
 ---
 
-CHECK 1 -- FACT-CHECK. Check both generated texts against the ORIGINAL CV only. Flag:
+CHECK 1 -- FACT-CHECK. This check is ONLY about whether the letter/summary accurately represents the ORIGINAL CV -- it is NEVER about whether the candidate meets the vacancy's bar. Flag ONLY:
 - Any skill, tool, employer, number, or achievement claimed in the letter/summary that is not actually present in the original CV (even if it sounds plausible or is a reasonable-sounding embellishment)
 - Any specific AI tool/product brand name (e.g. Claude Code, ChatGPT, Copilot) presented as something the candidate personally uses, unless that exact brand name is written in the original CV
 - Any language proficiency claim ("native speaker" etc.) that overstates what the original CV actually states
 - Any case where the letter/summary claims the candidate lacks a skill that is in fact mentioned in the original CV
-Do NOT flag: honest gap disclosures, general phrasing, or claims that genuinely are traceable to the original CV even if reworded.
+Do NOT flag, under any circumstances: a statement that accurately restates what the original CV says, even if that CV content falls short of what the vacancy asks for (e.g. the vacancy wants fluent Danish and the CV/letter honestly state a lower level -- that is a truthful statement, not a fact-check problem). A mismatch between the candidate's real level and the vacancy's requirement is never a CHECK 1 finding -- at most it belongs in CHECK 2, and only if left completely unmentioned.
 
-CHECK 2 -- COVERAGE. Identify the vacancy's major distinct requirement/responsibility categories (e.g. if a role blends two disciplines, such as "Product Owner" and "Analytics Engineer", that is two categories). For each major category that the cover letter does NOT address at all -- neither claiming relevant experience nor honestly acknowledging it as a gap -- flag it as uncovered. Do NOT flag a category that the letter addresses in any way, including an honest "I don't have this, but..." disclosure -- only flag categories the letter is silent about entirely.
+CHECK 2 -- COVERAGE. Identify the vacancy's major distinct requirement/responsibility categories (e.g. if a role blends two disciplines, such as "Product Owner" and "Analytics Engineer", that is two categories; a list of named technologies counts as one category per technology only if the vacancy treats them separately). For each major category that the cover letter does NOT address AT ALL -- neither claiming relevant experience nor honestly acknowledging it as a gap, under any name or phrasing -- flag it as uncovered. Before flagging a category, re-read the full letter text and confirm the category (or its name/a close synonym) truly never appears anywhere -- do NOT flag something the letter already names explicitly, even in a list of disclosed gaps (e.g. if the letter says "no experience with X, Y or Z", none of X, Y, or Z may be flagged as uncovered).
 
 Respond with ONLY a JSON object, no other text:
 {{
