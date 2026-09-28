@@ -685,8 +685,14 @@ async def _process_manual_vacancy(update: Update, telegram_id: int, vacancy) -> 
         )
         return
 
-    scored = await asyncio.to_thread(_score_vacancies, telegram_id, [vacancy], [])
+    scored, used_fallback = await asyncio.to_thread(_score_vacancies, telegram_id, [vacancy], [])
     v, percent, detail = scored[0]
+    if used_fallback:
+        await message.reply_text(
+            "⚠️ AI-оцінка зараз недоступна (Gemini перевантажений) — відсоток "
+            "нижче лише показує, чи згадуються ваші пошукові слова в тексті "
+            "вакансії, це не реальна оцінка відповідності. Спробуйте пізніше."
+        )
 
     existing = storage.get_last_results(telegram_id)
     combined = existing + [(v, percent, detail)]
@@ -818,21 +824,28 @@ SEMANTIC_BATCH_CAP = 30
 
 
 def _score_vacancies(telegram_id: int, vacancies: list, keywords: list[str]):
-    """Returns [(vacancy, percent, detail_string), ...].
+    """Returns ([(vacancy, percent, detail_string), ...], used_fallback).
 
     Prefers real semantic scoring via Gemini (bot/semantic_matching.py) when
     it's configured and the user has a parsed CV; falls back to plain
-    keyword-overlap matching (bot/matching.py) otherwise.
-    """
+    keyword-overlap matching (bot/matching.py) otherwise -- most often
+    because Gemini itself is temporarily overloaded (503 "high demand"),
+    which happens during the day fairly often. used_fallback lets the
+    caller warn that these percentages are just "did the search keyword
+    appear in the text", not a real fit judgement -- without it, a 100%
+    keyword-overlap score looks identical to a real 100% AI match, which
+    is actively misleading (several unrelated roles can all hit 100%
+    simply by mentioning the same one or two search words)."""
     cv_text = storage.get_cv_text(telegram_id) if semantic_matching_configured() else None
 
     if cv_text:
         candidates = vacancies[:SEMANTIC_BATCH_CAP]
         try:
             results = semantic_match_batch(cv_text, candidates)
-            return [
-                (v, r.percent, r.reasoning) for v, r in zip(candidates, results)
-            ]
+            return (
+                [(v, r.percent, r.reasoning) for v, r in zip(candidates, results)],
+                False,
+            )
         except Exception:
             logger.exception(
                 "Semantic matching failed for %s, falling back to keyword match",
@@ -840,10 +853,21 @@ def _score_vacancies(telegram_id: int, vacancies: list, keywords: list[str]):
             )
 
     scored = [(v, compute_match(v, keywords)) for v in vacancies]
-    return [
-        (v, m.percent, ("за словами: " + ", ".join(m.matched_keywords) if m.matched_keywords else ""))
-        for v, m in scored
-    ]
+    return (
+        [
+            (
+                v,
+                m.percent,
+                (
+                    "⚠️ лише ключові слова: " + ", ".join(m.matched_keywords)
+                    if m.matched_keywords
+                    else ""
+                ),
+            )
+            for v, m in scored
+        ],
+        True,
+    )
 
 
 # The "type a number to apply" hint is easy to miss as plain text buried in
@@ -953,8 +977,20 @@ async def run_search(
             )
         return False
 
-    scored = await asyncio.to_thread(_score_vacancies, telegram_id, new_vacancies, keywords)
+    scored, used_fallback = await asyncio.to_thread(
+        _score_vacancies, telegram_id, new_vacancies, keywords
+    )
     scored.sort(key=lambda triple: triple[1], reverse=True)
+
+    if used_fallback:
+        await send_with_retry(
+            update,
+            "⚠️ AI-оцінка зараз недоступна (Gemini перевантажений, це буває "
+            "вдень) — відсотки нижче лише показують, чи згадуються ваші "
+            "пошукові слова в тексті вакансії, це НЕ реальна оцінка "
+            "відповідності. Спробуйте пошук ще раз через кілька хвилин, "
+            "щоб отримати справжню AI-оцінку.",
+        )
 
     if min_percent is not None:
         scored = [triple for triple in scored if triple[1] >= min_percent]
