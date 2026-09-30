@@ -11,6 +11,11 @@ from bot.sources import Vacancy
 
 MAX_DESCRIPTION_CHARS = 4000
 
+# The bot's own UI text (buttons, status messages) is Ukrainian, so Verify's
+# human-readable explanations must match -- regardless of what language the
+# CV, vacancy, or generated letter happen to be in.
+EXPLANATION_LANGUAGE = "Ukrainian (Українською)"
+
 PROMPT_TEMPLATE = """You help a job seeker in Denmark write an ansøgning (cover letter) for a specific vacancy, grounded in their real CV.
 
 CANDIDATE'S CV:
@@ -88,11 +93,13 @@ Do NOT flag, under any circumstances: a statement that accurately restates what 
 
 CHECK 2 -- COVERAGE. Identify the vacancy's major distinct requirement/responsibility categories (e.g. if a role blends two disciplines, such as "Product Owner" and "Analytics Engineer", that is two categories; a list of named technologies counts as one category per technology only if the vacancy treats them separately). For each major category that the cover letter does NOT address AT ALL -- neither claiming relevant experience nor honestly acknowledging it as a gap, under any name or phrasing -- flag it as uncovered. Before flagging a category, re-read the full letter text and confirm the category (or its name/a close synonym) truly never appears anywhere -- do NOT flag something the letter already names explicitly, even in a list of disclosed gaps (e.g. if the letter says "no experience with X, Y or Z", none of X, Y, or Z may be flagged as uncovered).
 
+Write "problem", "area", and "why" in {explain_language} -- that is the language the person reading this check speaks, which may differ from the language of the CV, vacancy, or letter. "quote" is the exception: keep it verbatim, exactly as it appears in the letter or summary, untranslated.
+
 Respond with ONLY a JSON object, no other text:
 {{
   "clean": true/false,
-  "issues": [{{"quote": "the exact problematic phrase from the letter or summary", "problem": "one sentence explaining what in the original CV does NOT support this"}}],
-  "uncovered_areas": [{{"area": "short name of the requirement category from the vacancy", "why": "one sentence on what the vacancy asks for here that the letter never addresses"}}]
+  "issues": [{{"quote": "the exact problematic phrase from the letter or summary, verbatim, untranslated", "problem": "one sentence in {explain_language} explaining what in the original CV does NOT support this"}}],
+  "uncovered_areas": [{{"area": "short name of the requirement category from the vacancy, in {explain_language}", "why": "one sentence in {explain_language} on what the vacancy asks for here that the letter never addresses"}}]
 }}
 If nothing is wrong and everything major is addressed, return {{"clean": true, "issues": [], "uncovered_areas": []}}.
 """
@@ -143,6 +150,7 @@ def verify_application(
         description=truncate(vacancy.description, MAX_DESCRIPTION_CHARS),
         letter=letter,
         cv_summary=cv_summary or "(not generated)",
+        explain_language=EXPLANATION_LANGUAGE,
     )
     try:
         response = generate_with_retry(prompt, json_mode=True)
