@@ -39,4 +39,4 @@ EXCLUDED_TELEGRAM_IDS = {7644385945, 8794354329, ADMIN_TELEGRAM_ID}
 # being asked to wait for the admin to grant them full access via /grant --
 # keeps an unexpected wave of new people from running up the Gemini bill
 # before the admin has actually agreed to let them use the bot.
-FREE_TRIAL_AI_ACTIONS = 2
+FREE_TRIAL_AI_ACTIONS = 5
